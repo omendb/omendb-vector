@@ -209,9 +209,10 @@ M3 Max (macOS 15, Apple Silicon), 128-dimensional L2 vectors, Python API:
 | 1K vectors | 65ms | 32,600 | 31 µs |
 | 10K vectors | 180ms | 27,900 | 36 µs |
 
-HNSW backend (M=16, efConstruction=100, ef=100). SQ8 quantization enabled on
-all search paths. Metadata filtering adds 5—15% overhead depending on
-selectivity. Hybrid search (dense + BM25 + sparse) adds 20—40% overhead.
+HNSW backend (M=16, efConstruction=100, ef=100). The public preview uses F32
+traversal; quantized traversal remains experimental and is not a release
+guarantee. Metadata filtering and hybrid search are workload-dependent and
+are not covered by these early reference measurements.
 
 ## License
 
