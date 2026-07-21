@@ -1,23 +1,31 @@
 # OmenDB
 
+> **Developer preview (`0.1.0a1`).** OmenDB-Mojo is an early public preview.
+> APIs, persistence formats, supported platforms, and performance are still
+> subject to change. It is not a production-stability guarantee.
+
 Embedded local database for hybrid vector + text search with source evidence.
 
 OmenDB stores items with dense vectors, text, metadata, source evidence, and
 bounded relationships. It maintains HNSW, BM25, filter, and relationship indexes
 over those items. Search is hybrid: vector, text, or combined with RRF.
 
-```bash
-pip install omendb
-```
-
-Or build from source (requires [Pixi](https://pixi.sh)):
+Build this preview from source (requires [Pixi](https://pixi.sh)):
 
 ```bash
-git clone https://github.com/nick/omendb.git
-cd omendb/engines/omendb-mojo
+git clone https://github.com/omendb/omendb.git
+cd omendb
 pixi install
 pixi run python -m pip install -e .
 ```
+
+This Mojo preview is source-only and is not yet the package served by
+`pip install omendb`; use the source-build commands above.
+
+The Rust implementation and its existing language bindings live in the
+separate [`omendb-rs`](https://github.com/omendb/omendb-rs) repository. This
+repository is the active Mojo engine and does not replace that repository's
+published package history retroactively.
 
 ## Quickstart
 
@@ -190,6 +198,9 @@ omendb-engine-check            # print engine version
 - **[API Reference](docs/API.md)** — full Python API reference
 
 ## Benchmarks
+
+These are early local reference measurements, not release guarantees. Results
+depend on hardware, data distribution, index settings, and query mix.
 
 M3 Max (macOS 15, Apple Silicon), 128-dimensional L2 vectors, Python API:
 

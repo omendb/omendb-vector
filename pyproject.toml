@@ -7,6 +7,10 @@ dependencies = []
 description = "OmenDB: embedded local database for hybrid vector + text search with source evidence"
 readme = "README.md"
 
+[project.urls]
+Homepage = "https://github.com/omendb/omendb"
+Repository = "https://github.com/omendb/omendb"
+
 [build-system]
 requires = ["hatchling"]
 build-backend = "hatchling.build"
