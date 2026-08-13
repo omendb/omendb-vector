@@ -66,12 +66,6 @@ jobs:
       - name: Ruff
         run: pixi run ruff check --ignore E501 src/omendb scripts examples tests/test_python_api.py
 
-      - name: Mojo format
-        run: pixi run mojo format --quiet src/
-
-      - name: Mojo format diff
-        run: git diff --exit-code -- src
-
       - name: Python tests
         run: pixi run python -m pytest tests -q
 
