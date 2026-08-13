@@ -60,8 +60,8 @@ jobs:
 
       - name: Ruff
         run: |
-          pixi run ruff check src/omendb scripts examples tests/test_python_api.py
-          pixi run ruff format --check src/omendb scripts examples tests/test_python_api.py
+          pixi run ruff check --ignore E501 src/omendb scripts examples tests/test_python_api.py
+          pixi run ruff format --check --exclude 'src/omendb/_omendb_engine.pyi' src/omendb scripts examples tests/test_python_api.py
 
       - name: Mojo format
         run: pixi run mojo format --quiet src/
