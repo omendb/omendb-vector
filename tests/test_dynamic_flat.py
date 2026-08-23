@@ -2,7 +2,7 @@
 
 import pytest
 
-import omendb
+import omendb_vector
 
 
 class TestDynamicFlatCollection:
@@ -10,9 +10,9 @@ class TestDynamicFlatCollection:
 
     def test_dynamic_flat_4097(self):
         """Test creating a dynamic flat collection with dim=4097."""
-        db = omendb.memory()
+        db = omendb_vector.memory()
         # Use index="flat" with non-standard dimension
-        config = omendb.CollectionConfig(dim=4097, index="flat")
+        config = omendb_vector.CollectionConfig(dim=4097, index="flat")
         collection = db.collection("test_4097", config=config)
 
         # Create a simple vector
@@ -29,8 +29,8 @@ class TestDynamicFlatCollection:
 
     def test_dynamic_flat_100(self):
         """Test creating a dynamic flat collection with dim=100."""
-        db = omendb.memory()
-        config = omendb.CollectionConfig(dim=100, index="flat")
+        db = omendb_vector.memory()
+        config = omendb_vector.CollectionConfig(dim=100, index="flat")
         collection = db.collection("test_100", config=config)
 
         # Add multiple items
@@ -47,8 +47,8 @@ class TestDynamicFlatCollection:
 
     def test_dynamic_flat_duplicate_set_replaces_record(self):
         """Native duplicate set should replace by tombstoning old record."""
-        db = omendb.memory()
-        config = omendb.CollectionConfig(dim=100, index="flat")
+        db = omendb_vector.memory()
+        config = omendb_vector.CollectionConfig(dim=100, index="flat")
         collection = db.collection("test_duplicate", config=config)
         native = collection._native_handle()
 
@@ -62,8 +62,8 @@ class TestDynamicFlatCollection:
 
     def test_dynamic_flat_vector_mismatch(self):
         """Test that vector dimension mismatch raises clear error."""
-        db = omendb.memory()
-        config = omendb.CollectionConfig(dim=4097, index="flat")
+        db = omendb_vector.memory()
+        config = omendb_vector.CollectionConfig(dim=4097, index="flat")
         collection = db.collection("test", config=config)
 
         # Wrong dimension vector
@@ -75,12 +75,12 @@ class TestDynamicFlatCollection:
     def test_unsupported_flat_dim(self):
         """Test that dims exceeding max are rejected."""
         with pytest.raises(ValueError, match="dim=8193"):
-            omendb.CollectionConfig(dim=8193, index="flat")
+            omendb_vector.CollectionConfig(dim=8193, index="flat")
 
     def test_dynamic_flat_search_exact_ids(self):
         """Test exact ID search with dynamic flat."""
-        db = omendb.memory()
-        config = omendb.CollectionConfig(dim=100, index="flat")
+        db = omendb_vector.memory()
+        config = omendb_vector.CollectionConfig(dim=100, index="flat")
         collection = db.collection("test", config=config)
 
         # Add items
@@ -100,10 +100,10 @@ class TestDynamicFlatCollection:
     def test_dynamic_flat_persistent_create_open(self, tmp_path):
         """Test persistent dynamic flat collection create/open/flush/reopen."""
         db_path = str(tmp_path / "test_dynamic_flat.db")
-        config = omendb.CollectionConfig(dim=4097, index="flat")
+        config = omendb_vector.CollectionConfig(dim=4097, index="flat")
 
         # Create persistent collection
-        db = omendb.create(db_path)
+        db = omendb_vector.create(db_path)
         collection = db.collection("test_4097", config=config)
 
         # Add items
@@ -117,7 +117,7 @@ class TestDynamicFlatCollection:
         del db
 
         # Reopen and verify
-        db2 = omendb.open(db_path)
+        db2 = omendb_vector.open(db_path)
         collection2 = db2.collection("test_4097", config=config, create=False)
 
         # Verify search works
@@ -136,10 +136,10 @@ class TestDynamicFlatCollection:
     def test_dynamic_flat_persistent_delete_reopen(self, tmp_path):
         """Test that deletes persist across reopen."""
         db_path = str(tmp_path / "test_delete.db")
-        config = omendb.CollectionConfig(dim=100, index="flat")
+        config = omendb_vector.CollectionConfig(dim=100, index="flat")
 
         # Create and add items
-        db = omendb.create(db_path)
+        db = omendb_vector.create(db_path)
         collection = db.collection("test", config=config)
         collection.set("item1", vector=[0.1] * 100)
         collection.set("item2", vector=[0.2] * 100)
@@ -153,7 +153,7 @@ class TestDynamicFlatCollection:
         del collection
         del db
 
-        db2 = omendb.open(db_path)
+        db2 = omendb_vector.open(db_path)
         collection2 = db2.collection("test", config=config, create=False)
 
         # Verify delete persisted
@@ -168,12 +168,12 @@ class TestDynamicFlatCollection:
     def test_dynamic_flat_persistent_source_span(self, tmp_path):
         """Test that source spans persist across reopen."""
         db_path = str(tmp_path / "test_source.db")
-        config = omendb.CollectionConfig(dim=50, index="flat")
+        config = omendb_vector.CollectionConfig(dim=50, index="flat")
 
         source = {"path": "file.py", "line_start": 10, "line_end": 20}
 
         # Create and add items with source spans
-        db = omendb.create(db_path)
+        db = omendb_vector.create(db_path)
         collection = db.collection("test", config=config)
         collection.set(
             "item1",
@@ -186,7 +186,7 @@ class TestDynamicFlatCollection:
         del collection
         del db
 
-        db2 = omendb.open(db_path)
+        db2 = omendb_vector.open(db_path)
         collection2 = db2.collection("test", config=config, create=False)
 
         # Verify source span persisted

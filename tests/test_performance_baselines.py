@@ -1,6 +1,6 @@
 """Performance baseline tests.
 
-Documents performance baselines for OmenDB operations.
+Documents performance baselines for OmenDB Vector operations.
 """
 
 from __future__ import annotations
@@ -12,7 +12,7 @@ import time
 
 import pytest
 
-import omendb
+import omendb_vector
 
 
 def _skip_if_free_threaded() -> None:
@@ -34,8 +34,8 @@ class TestInsertPerformance:
         """Insert 10K items in reasonable time."""
         _skip_if_free_threaded()
 
-        db = omendb.create(str(tmp_path / "db"))
-        col = db.collection("test", config=omendb.CollectionConfig(dim=2))
+        db = omendb_vector.create(str(tmp_path / "db"))
+        col = db.collection("test", config=omendb_vector.CollectionConfig(dim=2))
 
         # Generate vectors
         vectors = [_generate_random_vector(2) for _ in range(10000)]
@@ -54,8 +54,8 @@ class TestInsertPerformance:
         """Insert 100K items in reasonable time."""
         _skip_if_free_threaded()
 
-        db = omendb.create(str(tmp_path / "db"))
-        col = db.collection("test", config=omendb.CollectionConfig(dim=2))
+        db = omendb_vector.create(str(tmp_path / "db"))
+        col = db.collection("test", config=omendb_vector.CollectionConfig(dim=2))
 
         # Generate vectors
         vectors = [_generate_random_vector(2) for _ in range(100000)]
@@ -80,8 +80,8 @@ class TestSearchPerformance:
         """Search latency on 10K items is reasonable."""
         _skip_if_free_threaded()
 
-        db = omendb.create(str(tmp_path / "db"))
-        col = db.collection("test", config=omendb.CollectionConfig(dim=2))
+        db = omendb_vector.create(str(tmp_path / "db"))
+        col = db.collection("test", config=omendb_vector.CollectionConfig(dim=2))
 
         # Insert items
         for i in range(10000):
@@ -106,8 +106,8 @@ class TestSearchPerformance:
         """Search latency on 100K items is reasonable."""
         _skip_if_free_threaded()
 
-        db = omendb.create(str(tmp_path / "db"))
-        col = db.collection("test", config=omendb.CollectionConfig(dim=2))
+        db = omendb_vector.create(str(tmp_path / "db"))
+        col = db.collection("test", config=omendb_vector.CollectionConfig(dim=2))
 
         # Insert items
         for i in range(100000):
@@ -136,8 +136,8 @@ class TestFlushPerformance:
         """Flush 10K items in reasonable time."""
         _skip_if_free_threaded()
 
-        db = omendb.create(str(tmp_path / "db"))
-        col = db.collection("test", config=omendb.CollectionConfig(dim=2))
+        db = omendb_vector.create(str(tmp_path / "db"))
+        col = db.collection("test", config=omendb_vector.CollectionConfig(dim=2))
 
         # Insert items
         for i in range(10000):
@@ -155,8 +155,8 @@ class TestFlushPerformance:
         """Flush 100K items in reasonable time."""
         _skip_if_free_threaded()
 
-        db = omendb.create(str(tmp_path / "db"))
-        col = db.collection("test", config=omendb.CollectionConfig(dim=2))
+        db = omendb_vector.create(str(tmp_path / "db"))
+        col = db.collection("test", config=omendb_vector.CollectionConfig(dim=2))
 
         # Insert items
         for i in range(100000):
@@ -178,8 +178,8 @@ class TestReopenPerformance:
         """Reopen 10K items in reasonable time."""
         _skip_if_free_threaded()
 
-        db = omendb.create(str(tmp_path / "db"))
-        col = db.collection("test", config=omendb.CollectionConfig(dim=2))
+        db = omendb_vector.create(str(tmp_path / "db"))
+        col = db.collection("test", config=omendb_vector.CollectionConfig(dim=2))
 
         # Insert items
         for i in range(10000):
@@ -189,7 +189,7 @@ class TestReopenPerformance:
 
         # Reopen
         start = time.perf_counter()
-        db2 = omendb.open(str(tmp_path / "db"))
+        db2 = omendb_vector.open(str(tmp_path / "db"))
         col2 = db2.collection("test")
         elapsed = time.perf_counter() - start
 

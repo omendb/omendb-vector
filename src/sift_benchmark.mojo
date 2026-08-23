@@ -1,5 +1,5 @@
 """
-SIFT-128 benchmark harness for OmenDB-Mojo.
+SIFT-128 benchmark harness for OmenDB Vector.
 
 Measures HNSW build speed, search QPS, recall@10, and latency percentiles.
 Supports siftsmall (10K) dataset.
@@ -179,7 +179,7 @@ def main() raises:
 
     # --- Persistence roundtrip ---
     print("Testing persistence roundtrip...")
-    var persist_path = "/tmp/omendb_sift_bench"
+    var persist_path = "/tmp/omendb_vector_sift_bench"
     save_hnsw(persist_path, index)
     var loaded = load_hnsw[dim](persist_path)
 

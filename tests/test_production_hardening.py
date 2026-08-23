@@ -10,7 +10,7 @@ import sys
 
 import pytest
 
-import omendb
+import omendb_vector
 
 
 def _skip_if_free_threaded() -> None:
@@ -25,15 +25,15 @@ class TestResourceCleanup:
         """Database close releases resources."""
         _skip_if_free_threaded()
 
-        db = omendb.create(str(tmp_path / "db"))
-        col = db.collection("test", config=omendb.CollectionConfig(dim=2))
+        db = omendb_vector.create(str(tmp_path / "db"))
+        col = db.collection("test", config=omendb_vector.CollectionConfig(dim=2))
         col.set("a", vector=[1.0, 0.0])
 
         # Close should release resources
         db.close()
 
         # Should be able to reopen
-        db2 = omendb.open(str(tmp_path / "db"))
+        db2 = omendb_vector.open(str(tmp_path / "db"))
         col2 = db2.collection("test")
         assert col2.get("a") is not None
 
@@ -42,22 +42,22 @@ class TestResourceCleanup:
         _skip_if_free_threaded()
 
         # Create first
-        db = omendb.create(str(tmp_path / "db"))
-        col = db.collection("test", config=omendb.CollectionConfig(dim=2))
+        db = omendb_vector.create(str(tmp_path / "db"))
+        col = db.collection("test", config=omendb_vector.CollectionConfig(dim=2))
         col.set("item_0", vector=[0.0, 0.0])
         db.flush()
         db.close()
 
         # Open/close cycles
         for i in range(1, 10):
-            db = omendb.open(str(tmp_path / "db"))
+            db = omendb_vector.open(str(tmp_path / "db"))
             col = db.collection("test")
             col.set(f"item_{i}", vector=[float(i), 0.0])
             db.flush()
             db.close()
 
         # Final open should have all items
-        db = omendb.open(str(tmp_path / "db"))
+        db = omendb_vector.open(str(tmp_path / "db"))
         col = db.collection("test")
         for i in range(10):
             assert col.get(f"item_{i}") is not None
@@ -66,8 +66,8 @@ class TestResourceCleanup:
         """Flush releases temporary resources."""
         _skip_if_free_threaded()
 
-        db = omendb.create(str(tmp_path / "db"))
-        col = db.collection("test", config=omendb.CollectionConfig(dim=2))
+        db = omendb_vector.create(str(tmp_path / "db"))
+        col = db.collection("test", config=omendb_vector.CollectionConfig(dim=2))
 
         # Insert many items
         for i in range(1000):
@@ -88,8 +88,8 @@ class TestMemoryLeaks:
         """Repeated operations don't leak memory."""
         _skip_if_free_threaded()
 
-        db = omendb.create(str(tmp_path / "db"))
-        col = db.collection("test", config=omendb.CollectionConfig(dim=2))
+        db = omendb_vector.create(str(tmp_path / "db"))
+        col = db.collection("test", config=omendb_vector.CollectionConfig(dim=2))
 
         # Get initial memory
         gc.collect()
@@ -121,15 +121,15 @@ class TestMemoryLeaks:
         initial_objects = len(gc.get_objects())
 
         # Create first
-        db = omendb.create(str(tmp_path / "db"))
-        col = db.collection("test", config=omendb.CollectionConfig(dim=2))
+        db = omendb_vector.create(str(tmp_path / "db"))
+        col = db.collection("test", config=omendb_vector.CollectionConfig(dim=2))
         col.set("item_0", vector=[0.0, 0.0])
         db.flush()
         db.close()
 
         # Do many flush/reopen cycles
         for i in range(1, 10):
-            db = omendb.open(str(tmp_path / "db"))
+            db = omendb_vector.open(str(tmp_path / "db"))
             col = db.collection("test")
             col.set(f"item_{i}", vector=[float(i), 0.0])
             db.flush()
@@ -153,11 +153,11 @@ class TestGracefulDegradation:
         """Many collections under stress work."""
         _skip_if_free_threaded()
 
-        db = omendb.create(str(tmp_path / "db"))
+        db = omendb_vector.create(str(tmp_path / "db"))
 
         # Create many collections
         for i in range(50):
-            col = db.collection(f"col_{i}", config=omendb.CollectionConfig(dim=2))
+            col = db.collection(f"col_{i}", config=omendb_vector.CollectionConfig(dim=2))
             col.set("a", vector=[1.0, 0.0])
 
         # All should be accessible
@@ -169,8 +169,8 @@ class TestGracefulDegradation:
         """Many items under stress work."""
         _skip_if_free_threaded()
 
-        db = omendb.create(str(tmp_path / "db"))
-        col = db.collection("test", config=omendb.CollectionConfig(dim=2))
+        db = omendb_vector.create(str(tmp_path / "db"))
+        col = db.collection("test", config=omendb_vector.CollectionConfig(dim=2))
 
         # Add many items
         for i in range(5000):
@@ -184,8 +184,8 @@ class TestGracefulDegradation:
         """Rapid flush operations work."""
         _skip_if_free_threaded()
 
-        db = omendb.create(str(tmp_path / "db"))
-        col = db.collection("test", config=omendb.CollectionConfig(dim=2))
+        db = omendb_vector.create(str(tmp_path / "db"))
+        col = db.collection("test", config=omendb_vector.CollectionConfig(dim=2))
 
         # Rapid flush
         for i in range(100):
@@ -200,8 +200,8 @@ class TestGracefulDegradation:
         """Search works under load."""
         _skip_if_free_threaded()
 
-        db = omendb.create(str(tmp_path / "db"))
-        col = db.collection("test", config=omendb.CollectionConfig(dim=2))
+        db = omendb_vector.create(str(tmp_path / "db"))
+        col = db.collection("test", config=omendb_vector.CollectionConfig(dim=2))
 
         # Insert items
         for i in range(1000):
@@ -220,8 +220,8 @@ class TestLongRunningStability:
         """Sustained operations work."""
         _skip_if_free_threaded()
 
-        db = omendb.create(str(tmp_path / "db"))
-        col = db.collection("test", config=omendb.CollectionConfig(dim=2))
+        db = omendb_vector.create(str(tmp_path / "db"))
+        col = db.collection("test", config=omendb_vector.CollectionConfig(dim=2))
 
         # Sustained operations
         for i in range(500):
@@ -237,8 +237,8 @@ class TestLongRunningStability:
         """Mixed operations are stable."""
         _skip_if_free_threaded()
 
-        db = omendb.create(str(tmp_path / "db"))
-        col = db.collection("test", config=omendb.CollectionConfig(dim=2))
+        db = omendb_vector.create(str(tmp_path / "db"))
+        col = db.collection("test", config=omendb_vector.CollectionConfig(dim=2))
 
         # Mixed operations
         for i in range(200):
@@ -260,8 +260,8 @@ class TestErrorRecovery:
         """Database recovers after invalid operation."""
         _skip_if_free_threaded()
 
-        db = omendb.create(str(tmp_path / "db"))
-        col = db.collection("test", config=omendb.CollectionConfig(dim=2))
+        db = omendb_vector.create(str(tmp_path / "db"))
+        col = db.collection("test", config=omendb_vector.CollectionConfig(dim=2))
 
         # Valid operation
         col.set("a", vector=[1.0, 0.0])
@@ -280,8 +280,8 @@ class TestErrorRecovery:
         """Can flush after error."""
         _skip_if_free_threaded()
 
-        db = omendb.create(str(tmp_path / "db"))
-        col = db.collection("test", config=omendb.CollectionConfig(dim=2))
+        db = omendb_vector.create(str(tmp_path / "db"))
+        col = db.collection("test", config=omendb_vector.CollectionConfig(dim=2))
 
         # Valid operation
         col.set("a", vector=[1.0, 0.0])
@@ -296,7 +296,7 @@ class TestErrorRecovery:
         db.flush()
 
         # Reopen and verify
-        db2 = omendb.open(str(tmp_path / "db"))
+        db2 = omendb_vector.open(str(tmp_path / "db"))
         col2 = db2.collection("test")
         assert col2.get("a") is not None
 
@@ -310,8 +310,8 @@ class TestConcurrentAccess:
 
         import threading
 
-        db = omendb.create(str(tmp_path / "db"))
-        col = db.collection("test", config=omendb.CollectionConfig(dim=2))
+        db = omendb_vector.create(str(tmp_path / "db"))
+        col = db.collection("test", config=omendb_vector.CollectionConfig(dim=2))
         col.set("a", vector=[1.0, 0.0])
 
         results = []

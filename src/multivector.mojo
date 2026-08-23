@@ -391,7 +391,7 @@ struct MultiVectorExactStore[dim: Int](Movable):
             parent = "."
         makedirs(parent, exist_ok=True)
         var tmp_path = mkdtemp(
-            prefix=".omendb-multivector-" + basename(path) + "-",
+            prefix=".omendb_vector-multivector-" + basename(path) + "-",
             dir=parent,
         )
         var backup_path = path + ".bak"

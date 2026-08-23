@@ -7,12 +7,12 @@ from typing import Any, cast
 
 import pytest
 
-import omendb
+import omendb_vector
 
 
 def test_import_and_collection_config() -> None:
-    config = omendb.CollectionConfig(dim=2)
-    db = omendb.memory()
+    config = omendb_vector.CollectionConfig(dim=2)
+    db = omendb_vector.memory()
     docs = db.collection("docs", config=config)
 
     assert docs.name == "docs"
@@ -22,19 +22,19 @@ def test_import_and_collection_config() -> None:
 
 def test_python_boundary_validation() -> None:
     with pytest.raises(ValueError, match="hnsw.m"):
-        omendb.HNSWConfig(m=0)
+        omendb_vector.HNSWConfig(m=0)
     with pytest.raises(ValueError, match="ef_search"):
-        omendb.HNSWConfig(ef_search=0)
+        omendb_vector.HNSWConfig(ef_search=0)
     with pytest.raises(ValueError, match="alpha"):
-        omendb.HNSWConfig(alpha=0.0)
+        omendb_vector.HNSWConfig(alpha=0.0)
 
-    db = omendb.memory()
+    db = omendb_vector.memory()
     with pytest.raises(ValueError, match="collection name"):
-        db.collection("", config=omendb.CollectionConfig(dim=2))
+        db.collection("", config=omendb_vector.CollectionConfig(dim=2))
     with pytest.raises(ValueError, match="path separators"):
-        db.collection("../outside", config=omendb.CollectionConfig(dim=2))
+        db.collection("../outside", config=omendb_vector.CollectionConfig(dim=2))
 
-    docs = db.collection("docs", config=omendb.CollectionConfig(dim=2))
+    docs = db.collection("docs", config=omendb_vector.CollectionConfig(dim=2))
     with pytest.raises(ValueError, match="k"):
         docs.search_vector([0.0, 0.0], k=0)
     with pytest.raises(ValueError, match="ef"):
@@ -46,26 +46,26 @@ def test_collection_config_and_missing_path_errors_are_explicit(tmp_path) -> Non
         pytest.skip("Mojo extension is built for standard CPython ABI")
 
     db_path = tmp_path / "db"
-    db = omendb.create(db_path)
+    db = omendb_vector.create(db_path)
     with pytest.raises(ValueError, match="config is required"):
         db.collection("missing")
     with pytest.raises(FileNotFoundError, match="manifest.json"):
         db.collection("missing", create=False)
 
-    docs = db.collection("docs", config=omendb.CollectionConfig(dim=2))
+    docs = db.collection("docs", config=omendb_vector.CollectionConfig(dim=2))
     docs.set("origin", vector=[0.0, 0.0])
     docs.flush()
 
-    reopened = omendb.open(db_path, create=False)
+    reopened = omendb_vector.open(db_path, create=False)
     with pytest.raises(ValueError, match="config does not match persisted manifest"):
-        reopened.collection("docs", config=omendb.CollectionConfig(dim=128))
+        reopened.collection("docs", config=omendb_vector.CollectionConfig(dim=128))
     with pytest.raises(ValueError, match="text requested True, persisted False"):
-        reopened.collection("docs", config=omendb.CollectionConfig(dim=2, text=True))
+        reopened.collection("docs", config=omendb_vector.CollectionConfig(dim=2, text=True))
 
     cached = reopened.collection("docs", create=False)
-    assert reopened.collection("docs", config=omendb.CollectionConfig(dim=2)) is cached
+    assert reopened.collection("docs", config=omendb_vector.CollectionConfig(dim=2)) is cached
     with pytest.raises(ValueError, match="dim requested 128, persisted 2"):
-        reopened.collection("docs", config=omendb.CollectionConfig(dim=128))
+        reopened.collection("docs", config=omendb_vector.CollectionConfig(dim=128))
 
 
 def test_corrupt_collection_manifest_has_clear_python_error(tmp_path) -> None:
@@ -73,15 +73,15 @@ def test_corrupt_collection_manifest_has_clear_python_error(tmp_path) -> None:
         pytest.skip("Mojo extension is built for standard CPython ABI")
 
     db_path = tmp_path / "db"
-    docs = omendb.create(db_path).collection(
-        "docs", config=omendb.CollectionConfig(dim=2)
+    docs = omendb_vector.create(db_path).collection(
+        "docs", config=omendb_vector.CollectionConfig(dim=2)
     )
     docs.set("origin", vector=[0.0, 0.0])
     docs.flush()
     (db_path / "docs" / "manifest.json").write_text("{")
 
     with pytest.raises(ValueError, match="manifest is not valid JSON"):
-        omendb.open(db_path, create=False).collection("docs", create=False)
+        omendb_vector.open(db_path, create=False).collection("docs", create=False)
 
 
 def test_open_recovers_collection_backup_after_interrupted_swap(tmp_path) -> None:
@@ -89,8 +89,8 @@ def test_open_recovers_collection_backup_after_interrupted_swap(tmp_path) -> Non
         pytest.skip("Mojo extension is built for standard CPython ABI")
 
     db_path = tmp_path / "db"
-    docs = omendb.create(db_path).collection(
-        "docs", config=omendb.CollectionConfig(dim=2, text=True)
+    docs = omendb_vector.create(db_path).collection(
+        "docs", config=omendb_vector.CollectionConfig(dim=2, text=True)
     )
     docs.set("old", vector=[0.0, 0.0], text="last committed snapshot")
     docs.flush()
@@ -99,7 +99,7 @@ def test_open_recovers_collection_backup_after_interrupted_swap(tmp_path) -> Non
     backup_path = db_path / "docs.bak"
     shutil.move(str(collection_path), str(backup_path))
 
-    reopened = omendb.open(db_path, create=False).collection("docs", create=False)
+    reopened = omendb_vector.open(db_path, create=False).collection("docs", create=False)
 
     assert collection_path.exists()
     assert not backup_path.exists()
@@ -111,8 +111,8 @@ def test_open_prefers_current_collection_when_backup_is_stale(tmp_path) -> None:
         pytest.skip("Mojo extension is built for standard CPython ABI")
 
     db_path = tmp_path / "db"
-    docs = omendb.create(db_path).collection(
-        "docs", config=omendb.CollectionConfig(dim=2, text=True)
+    docs = omendb_vector.create(db_path).collection(
+        "docs", config=omendb_vector.CollectionConfig(dim=2, text=True)
     )
     docs.set("old", vector=[0.0, 0.0], text="old snapshot")
     docs.flush()
@@ -124,7 +124,7 @@ def test_open_prefers_current_collection_when_backup_is_stale(tmp_path) -> None:
     docs.flush()
     shutil.copytree(old_snapshot, db_path / "docs.bak")
 
-    reopened = omendb.open(db_path, create=False).collection("docs", create=False)
+    reopened = omendb_vector.open(db_path, create=False).collection("docs", create=False)
 
     assert [row.id for row in reopened.search_text("current", k=1)] == ["new"]
     assert reopened.search_text("old", k=1) == []
@@ -140,30 +140,30 @@ def test_flush_reports_collection_write_lock_conflict(tmp_path) -> None:
         pytest.skip("advisory lock test requires fcntl")
 
     db_path = tmp_path / "db"
-    docs = omendb.create(db_path).collection(
-        "docs", config=omendb.CollectionConfig(dim=2)
+    docs = omendb_vector.create(db_path).collection(
+        "docs", config=omendb_vector.CollectionConfig(dim=2)
     )
     docs.set("origin", vector=[0.0, 0.0])
     lock_path = db_path / "docs.write.lock"
     with lock_path.open("a+", encoding="utf-8") as lock_file:
         fcntl.flock(lock_file.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
         try:
-            with pytest.raises(omendb.StoreBusyError, match="write already"):
+            with pytest.raises(omendb_vector.StoreBusyError, match="write already"):
                 docs.flush()
         finally:
             fcntl.flock(lock_file.fileno(), fcntl.LOCK_UN)
 
 
 def test_search_requires_explicit_mode_for_text_and_vector() -> None:
-    docs = omendb.memory().collection("docs", config=omendb.CollectionConfig(dim=2))
+    docs = omendb_vector.memory().collection("docs", config=omendb_vector.CollectionConfig(dim=2))
 
     with pytest.raises(ValueError, match="mode is required"):
         docs.search(vector=[0.0, 1.0], text="query")
 
 
 def test_search_validates_mode_filter_and_explain_before_native_dispatch() -> None:
-    docs = omendb.memory().collection(
-        "docs", config=omendb.CollectionConfig(dim=2, text=True)
+    docs = omendb_vector.memory().collection(
+        "docs", config=omendb_vector.CollectionConfig(dim=2, text=True)
     )
     source = {"path": "guide.md", "line_start": 1, "line_end": 2}
     docs.set("guide", vector=[0.0, 1.0], text="query guide", source=source)
@@ -181,7 +181,7 @@ def test_search_validates_mode_filter_and_explain_before_native_dispatch() -> No
         "ef_search": 100,
         "filter": None,
     }
-    assert vector_result.evidence == omendb.SearchEvidence(
+    assert vector_result.evidence == omendb_vector.SearchEvidence(
         method="hnsw_l2",
         candidate_source="hnsw_l2",
         candidate_k=10,
@@ -199,7 +199,7 @@ def test_search_validates_mode_filter_and_explain_before_native_dispatch() -> No
         "candidate_k": 10,
         "filter": None,
     }
-    assert text_result.evidence == omendb.SearchEvidence(
+    assert text_result.evidence == omendb_vector.SearchEvidence(
         method="bm25",
         candidate_source="bm25",
         candidate_k=10,
@@ -214,7 +214,7 @@ def test_set_update_delete_vector_lifecycle() -> None:
     if "t" in sys.abiflags:
         pytest.skip("Mojo extension is built for standard CPython ABI")
 
-    docs = omendb.memory().collection("docs", config=omendb.CollectionConfig(dim=2))
+    docs = omendb_vector.memory().collection("docs", config=omendb_vector.CollectionConfig(dim=2))
 
     docs.set("a", vector=[0.0, 0.0], metadata={"version": 1})
     docs.update("a", vector=[10.0, 0.0], metadata={"version": 2})
@@ -245,8 +245,8 @@ def test_set_duplicate_id_is_explicit_upsert() -> None:
     if "t" in sys.abiflags:
         pytest.skip("Mojo extension is built for standard CPython ABI")
 
-    docs = omendb.memory().collection(
-        "docs", config=omendb.CollectionConfig(dim=2, text=True)
+    docs = omendb_vector.memory().collection(
+        "docs", config=omendb_vector.CollectionConfig(dim=2, text=True)
     )
     docs.set(
         "guide",
@@ -289,7 +289,7 @@ def test_vector_set_and_search_when_native_extension_is_available() -> None:
     if "t" in sys.abiflags:
         pytest.skip("Mojo extension is built for standard CPython ABI")
 
-    docs = omendb.memory().collection("docs", config=omendb.CollectionConfig(dim=2))
+    docs = omendb_vector.memory().collection("docs", config=omendb_vector.CollectionConfig(dim=2))
 
     docs.set("origin", vector=[0.0, 0.0], metadata={"kind": "anchor"})
     docs.set_many(
@@ -324,19 +324,19 @@ def test_source_span_lifecycle_search_and_reopen(tmp_path) -> None:
         pytest.skip("Mojo extension is built for standard CPython ABI")
 
     with pytest.raises(ValueError, match="source requires"):
-        omendb.memory().collection("bad", config=omendb.CollectionConfig(dim=2)).set(
+        omendb_vector.memory().collection("bad", config=omendb_vector.CollectionConfig(dim=2)).set(
             "bad", vector=[0.0, 0.0], source={"line_start": 1}
         )
 
     source = {
-        "repo": "omendb-mojo",
+        "repo": "omendb-vector",
         "path": "docs/install.md",
         "line_start": 3,
         "line_end": 9,
     }
     db_path = tmp_path / "db"
-    docs = omendb.create(db_path).collection(
-        "docs", config=omendb.CollectionConfig(dim=2, text=True)
+    docs = omendb_vector.create(db_path).collection(
+        "docs", config=omendb_vector.CollectionConfig(dim=2, text=True)
     )
 
     docs.set(
@@ -364,7 +364,7 @@ def test_source_span_lifecycle_search_and_reopen(tmp_path) -> None:
     }
 
     docs.flush()
-    reopened = omendb.open(db_path, create=False).collection("docs", create=False)
+    reopened = omendb_vector.open(db_path, create=False).collection("docs", create=False)
     assert reopened.search_vector([0.0, 0.0], k=1)[0].source == source
     assert reopened.get("install", include_source=True, include_text=False, include_vector=False) == {
         "id": "install",
@@ -384,8 +384,8 @@ def test_text_only_items_without_placeholder_vectors(tmp_path) -> None:
         pytest.skip("Mojo extension is built for standard CPython ABI")
 
     db_path = tmp_path / "db"
-    docs = omendb.create(db_path).collection(
-        "docs", config=omendb.CollectionConfig(dim=2, text=True)
+    docs = omendb_vector.create(db_path).collection(
+        "docs", config=omendb_vector.CollectionConfig(dim=2, text=True)
     )
 
     # Add text-only item (no vector)
@@ -431,7 +431,7 @@ def test_text_only_items_without_placeholder_vectors(tmp_path) -> None:
 
     # Flush and reopen
     docs.flush()
-    reopened = omendb.open(db_path, create=False).collection("docs", create=False)
+    reopened = omendb_vector.open(db_path, create=False).collection("docs", create=False)
 
     # Text search should still find both
     results = reopened.search_text("readme", k=1)
@@ -456,7 +456,7 @@ def test_vector_search_dim128_when_native_extension_is_available() -> None:
     if "t" in sys.abiflags:
         pytest.skip("Mojo extension is built for standard CPython ABI")
 
-    docs = omendb.memory().collection("docs", config=omendb.CollectionConfig(dim=128))
+    docs = omendb_vector.memory().collection("docs", config=omendb_vector.CollectionConfig(dim=128))
     origin = [0.0] * 128
     right = [0.0] * 128
     right[0] = 1.0
@@ -481,7 +481,7 @@ def test_vector_search_dim384_when_native_extension_is_available() -> None:
     if "t" in sys.abiflags:
         pytest.skip("Mojo extension is built for standard CPython ABI")
 
-    docs = omendb.memory().collection("docs", config=omendb.CollectionConfig(dim=384))
+    docs = omendb_vector.memory().collection("docs", config=omendb_vector.CollectionConfig(dim=384))
     origin = [0.0] * 384
     right = [0.0] * 384
     right[0] = 1.0
@@ -499,26 +499,26 @@ def test_persistent_vector_collection_reopens(tmp_path) -> None:
         pytest.skip("Mojo extension is built for standard CPython ABI")
 
     db_path = tmp_path / "db"
-    docs = omendb.create(db_path).collection(
-        "docs", config=omendb.CollectionConfig(dim=2)
+    docs = omendb_vector.create(db_path).collection(
+        "docs", config=omendb_vector.CollectionConfig(dim=2)
     )
     docs.set("origin", vector=[0.0, 0.0], metadata={"kind": "anchor"})
     docs.set("right", vector=[1.0, 0.0])
     docs.flush()
 
-    reopened = omendb.open(db_path).collection(
-        "docs", config=omendb.CollectionConfig(dim=2)
+    reopened = omendb_vector.open(db_path).collection(
+        "docs", config=omendb_vector.CollectionConfig(dim=2)
     )
     results = reopened.search_vector([0.05, 0.0], k=2)
 
     assert [result.id for result in results] == ["origin", "right"]
     assert results[0].metadata == {"kind": "anchor"}
 
-    inferred_config = omendb.open(db_path, create=False).collection(
+    inferred_config = omendb_vector.open(db_path, create=False).collection(
         "docs", create=False
     )
     assert inferred_config.config.dim == 2
-    assert omendb.open(db_path, create=False).collections() == ["docs"]
+    assert omendb_vector.open(db_path, create=False).collections() == ["docs"]
 
 
 def test_dense_flat_vector_collection_uses_exact_search_and_reopens(
@@ -528,8 +528,8 @@ def test_dense_flat_vector_collection_uses_exact_search_and_reopens(
         pytest.skip("Mojo extension is built for standard CPython ABI")
 
     db_path = tmp_path / "db"
-    docs = omendb.create(db_path).collection(
-        "docs", config=omendb.CollectionConfig(dim=2, index="flat", text=True)
+    docs = omendb_vector.create(db_path).collection(
+        "docs", config=omendb_vector.CollectionConfig(dim=2, index="flat", text=True)
     )
     docs.set(
         "origin",
@@ -562,17 +562,17 @@ def test_dense_flat_vector_collection_uses_exact_search_and_reopens(
     assert manifest["index_mode"] == "hnsw"
     assert manifest["public_index_mode"] == "flat"
 
-    reopened = omendb.open(db_path, create=False).collection("docs", create=False)
+    reopened = omendb_vector.open(db_path, create=False).collection("docs", create=False)
     assert reopened.config.index == "flat"
     assert [row.id for row in reopened.search_vector([0.2, 0.0], k=2)] == [
         "origin",
         "right",
     ]
-    assert omendb.check(db_path).ok
+    assert omendb_vector.check(db_path).ok
 
     with pytest.raises(ValueError, match="index requested 'hnsw', persisted 'flat'"):
-        omendb.open(db_path, create=False).collection(
-            "docs", config=omendb.CollectionConfig(dim=2, index="hnsw")
+        omendb_vector.open(db_path, create=False).collection(
+            "docs", config=omendb_vector.CollectionConfig(dim=2, index="hnsw")
         )
 
 
@@ -581,8 +581,8 @@ def test_database_check_passes_for_dense_and_muvera_collections(tmp_path) -> Non
         pytest.skip("Mojo extension is built for standard CPython ABI")
 
     db_path = tmp_path / "db"
-    db = omendb.create(db_path)
-    docs = db.collection("docs", config=omendb.CollectionConfig(dim=2, text=True))
+    db = omendb_vector.create(db_path)
+    docs = db.collection("docs", config=omendb_vector.CollectionConfig(dim=2, text=True))
     docs.set(
         "install",
         vector=[0.0, 0.0],
@@ -591,7 +591,7 @@ def test_database_check_passes_for_dense_and_muvera_collections(tmp_path) -> Non
     )
     code = db.collection(
         "code",
-        config=omendb.CollectionConfig(
+        config=omendb_vector.CollectionConfig(
             dim=2,
             vector_mode="multi",
             index="hnsw",
@@ -613,7 +613,7 @@ def test_database_check_passes_for_dense_and_muvera_collections(tmp_path) -> Non
     assert result.ok
     assert result.collections_checked == 2
     assert result.issues == ()
-    assert omendb.check(db_path).ok
+    assert omendb_vector.check(db_path).ok
 
 
 def test_maintenance_stats_expose_tombstones_and_reopen(tmp_path) -> None:
@@ -621,8 +621,8 @@ def test_maintenance_stats_expose_tombstones_and_reopen(tmp_path) -> None:
         pytest.skip("Mojo extension is built for standard CPython ABI")
 
     db_path = tmp_path / "db"
-    docs = omendb.create(db_path).collection(
-        "docs", config=omendb.CollectionConfig(dim=2, text=True, graph=True)
+    docs = omendb_vector.create(db_path).collection(
+        "docs", config=omendb_vector.CollectionConfig(dim=2, text=True, graph=True)
     )
     docs.set(
         "keep-a",
@@ -636,7 +636,7 @@ def test_maintenance_stats_expose_tombstones_and_reopen(tmp_path) -> None:
     docs.flush()
 
     initial = docs.maintenance_stats()
-    assert initial == omendb.MaintenanceStats(
+    assert initial == omendb_vector.MaintenanceStats(
         collection="docs",
         persistent=True,
         live_count=3,
@@ -666,7 +666,7 @@ def test_maintenance_stats_expose_tombstones_and_reopen(tmp_path) -> None:
     assert stats.estimated_reclaimable_bytes is not None
     assert stats.estimated_reclaimable_bytes > 0
 
-    reopened = omendb.open(db_path, create=False).collection("docs", create=False)
+    reopened = omendb_vector.open(db_path, create=False).collection("docs", create=False)
     reopened_stats = reopened.maintenance_stats()
     assert reopened_stats.live_count == 2
     assert reopened_stats.record_count == 3
@@ -696,7 +696,7 @@ def test_maintenance_stats_expose_tombstones_and_reopen(tmp_path) -> None:
     assert [row.id for row in reopened.search_text("remove", k=3)] == []
     assert reopened.neighbors("keep-a", type="related") == ["keep-b"]
 
-    post_vacuum = omendb.open(db_path, create=False).collection("docs", create=False)
+    post_vacuum = omendb_vector.open(db_path, create=False).collection("docs", create=False)
     post_stats = post_vacuum.maintenance_stats()
     assert post_stats.live_count == 2
     assert post_stats.record_count == 2
@@ -708,7 +708,7 @@ def test_maintenance_stats_expose_tombstones_and_reopen(tmp_path) -> None:
 
 def test_vacuum_works_on_memory_collection() -> None:
     """vacuum() on memory collections should compact deleted records."""
-    docs = omendb.memory().collection("docs", config=omendb.CollectionConfig(dim=2))
+    docs = omendb_vector.memory().collection("docs", config=omendb_vector.CollectionConfig(dim=2))
     docs.set("a", vector=[0.0, 0.0])
     docs.set("b", vector=[1.0, 0.0])
     docs.set("c", vector=[0.0, 1.0])
@@ -743,15 +743,15 @@ def test_database_check_reports_dense_checksum_corruption(tmp_path) -> None:
         pytest.skip("Mojo extension is built for standard CPython ABI")
 
     db_path = tmp_path / "db"
-    docs = omendb.create(db_path).collection(
-        "docs", config=omendb.CollectionConfig(dim=2)
+    docs = omendb_vector.create(db_path).collection(
+        "docs", config=omendb_vector.CollectionConfig(dim=2)
     )
     docs.set("origin", vector=[0.0, 0.0])
     docs.flush()
     records_path = db_path / "docs" / "records.json"
     records_path.write_text(records_path.read_text().replace("origin", "corrupt", 1))
 
-    result = omendb.check(db_path)
+    result = omendb_vector.check(db_path)
 
     assert not result.ok
     assert result.collections_checked == 1
@@ -770,9 +770,9 @@ def test_database_check_reports_multivector_missing_sidecar(tmp_path) -> None:
         pytest.skip("Mojo extension is built for standard CPython ABI")
 
     db_path = tmp_path / "db"
-    docs = omendb.create(db_path).collection(
+    docs = omendb_vector.create(db_path).collection(
         "code",
-        config=omendb.CollectionConfig(
+        config=omendb_vector.CollectionConfig(
             dim=2,
             vector_mode="multi",
             index="flat",
@@ -784,7 +784,7 @@ def test_database_check_reports_multivector_missing_sidecar(tmp_path) -> None:
     docs.flush()
     (db_path / "code" / "source_spans.strings").unlink()
 
-    result = omendb.open(db_path, create=False).check()
+    result = omendb_vector.open(db_path, create=False).check()
 
     assert not result.ok
     assert result.collections_checked == 1
@@ -799,8 +799,8 @@ def test_database_check_reports_multivector_missing_sidecar(tmp_path) -> None:
 
 
 def test_database_check_rejects_memory_databases() -> None:
-    with pytest.raises(omendb.EngineUnavailableError, match="memory databases"):
-        omendb.memory().check()
+    with pytest.raises(omendb_vector.EngineUnavailableError, match="memory databases"):
+        omendb_vector.memory().check()
 
 
 def test_persistent_dim128_collection_reopens(tmp_path) -> None:
@@ -811,14 +811,14 @@ def test_persistent_dim128_collection_reopens(tmp_path) -> None:
     origin = [0.0] * 128
     right = [0.0] * 128
     right[0] = 1.0
-    docs = omendb.create(db_path).collection(
-        "docs", config=omendb.CollectionConfig(dim=128)
+    docs = omendb_vector.create(db_path).collection(
+        "docs", config=omendb_vector.CollectionConfig(dim=128)
     )
     docs.set("origin", vector=origin)
     docs.set("right", vector=right)
     docs.flush()
 
-    reopened = omendb.open(db_path, create=False).collection("docs", create=False)
+    reopened = omendb_vector.open(db_path, create=False).collection("docs", create=False)
 
     assert reopened.config.dim == 128
     assert [row.id for row in reopened.search_vector([0.1, *([0.0] * 127)], k=2)] == [
@@ -832,11 +832,11 @@ def test_collection_config_hnsw_reaches_native_manifest(tmp_path) -> None:
         pytest.skip("Mojo extension is built for standard CPython ABI")
 
     db_path = tmp_path / "db"
-    docs = omendb.create(db_path).collection(
+    docs = omendb_vector.create(db_path).collection(
         "docs",
-        config=omendb.CollectionConfig(
+        config=omendb_vector.CollectionConfig(
             dim=128,
-            hnsw=omendb.HNSWConfig(m=32, ef_construction=400, ef_search=512),
+            hnsw=omendb_vector.HNSWConfig(m=32, ef_construction=400, ef_search=512),
         ),
     )
     docs.set("origin", vector=[0.0] * 128)
@@ -853,9 +853,9 @@ def test_multivector_add_search_get_and_reopen(tmp_path) -> None:
         pytest.skip("Mojo extension is built for standard CPython ABI")
 
     db_path = tmp_path / "db"
-    docs = omendb.create(db_path).collection(
+    docs = omendb_vector.create(db_path).collection(
         "code",
-        config=omendb.CollectionConfig(
+        config=omendb_vector.CollectionConfig(
             dim=2,
             vector_mode="multi",
             index="flat",
@@ -888,7 +888,7 @@ def test_multivector_add_search_get_and_reopen(tmp_path) -> None:
     semantic_explanation = semantic[0].explanation
     assert semantic_explanation is not None
     assert semantic_explanation == {"method": "maxsim", "maxsim": 2.0}
-    assert semantic[0].evidence == omendb.SearchEvidence(
+    assert semantic[0].evidence == omendb_vector.SearchEvidence(
         method="maxsim",
         candidate_source="maxsim",
         score_parts={"score": 2.0, "maxsim": 2.0},
@@ -914,13 +914,13 @@ def test_multivector_add_search_get_and_reopen(tmp_path) -> None:
     assert hybrid[0].evidence.method == "maxsim"
     assert hybrid[0].evidence.candidate_source == "bm25"
     assert hybrid[0].evidence.rerank == "maxsim"
-    with pytest.raises(omendb.EngineUnavailableError, match="dense RRF"):
+    with pytest.raises(omendb_vector.EngineUnavailableError, match="dense RRF"):
         docs.search_hybrid(
             vectors=[[1.0, 0.0]],
             text="function",
             hybrid_alpha=0.9,
         )
-    with pytest.raises(omendb.EngineUnavailableError, match="dense HNSW"):
+    with pytest.raises(omendb_vector.EngineUnavailableError, match="dense HNSW"):
         docs.search_hybrid(vectors=[[1.0, 0.0]], text="function", ef=100)
 
     assert docs.get("fn", include_vectors=True, include_source=True, include_text=False) == {
@@ -931,7 +931,7 @@ def test_multivector_add_search_get_and_reopen(tmp_path) -> None:
     }
 
     docs.flush()
-    reopened = omendb.open(db_path, create=False).collection("code", create=False)
+    reopened = omendb_vector.open(db_path, create=False).collection("code", create=False)
     assert reopened.config.vector_mode == "multi"
     assert reopened.config.index == "flat"
     assert reopened.config.metric == "dot"
@@ -943,7 +943,7 @@ def test_muvera_multivector_config_and_reopen(tmp_path) -> None:
         pytest.skip("Mojo extension is built for standard CPython ABI")
 
     with pytest.raises(ValueError, match="index='hnsw'"):
-        omendb.CollectionConfig(
+        omendb_vector.CollectionConfig(
             dim=2,
             vector_mode="multi",
             index="flat",
@@ -951,7 +951,7 @@ def test_muvera_multivector_config_and_reopen(tmp_path) -> None:
             encoding="muvera",
         )
     with pytest.raises(ValueError, match="index='flat'"):
-        omendb.CollectionConfig(
+        omendb_vector.CollectionConfig(
             dim=2,
             vector_mode="multi",
             index="hnsw",
@@ -960,9 +960,9 @@ def test_muvera_multivector_config_and_reopen(tmp_path) -> None:
         )
 
     db_path = tmp_path / "db"
-    docs = omendb.create(db_path).collection(
+    docs = omendb_vector.create(db_path).collection(
         "code",
-        config=omendb.CollectionConfig(
+        config=omendb_vector.CollectionConfig(
             dim=2,
             vector_mode="multi",
             index="hnsw",
@@ -1000,7 +1000,7 @@ def test_muvera_multivector_config_and_reopen(tmp_path) -> None:
     assert manifest["candidate_index_mode"] == "fde_hnsw_rebuild_v0"
     assert manifest["candidate_k"] == 500
 
-    reopened = omendb.open(db_path, create=False).collection("code", create=False)
+    reopened = omendb_vector.open(db_path, create=False).collection("code", create=False)
     assert reopened.config.vector_mode == "multi"
     assert reopened.config.index == "hnsw"
     assert reopened.config.metric == "dot"
@@ -1019,9 +1019,9 @@ def test_vacuum_compacts_muvera_multivector_collection(tmp_path) -> None:
         pytest.skip("Mojo extension is built for standard CPython ABI")
 
     db_path = tmp_path / "db"
-    docs = omendb.create(db_path).collection(
+    docs = omendb_vector.create(db_path).collection(
         "code",
-        config=omendb.CollectionConfig(
+        config=omendb_vector.CollectionConfig(
             dim=2,
             vector_mode="multi",
             index="hnsw",
@@ -1080,7 +1080,7 @@ def test_vacuum_compacts_muvera_multivector_collection(tmp_path) -> None:
     assert manifest["record_count"] == 1
     assert manifest["tombstone_count"] == 0
 
-    reopened = omendb.open(db_path, create=False).collection("code", create=False)
+    reopened = omendb_vector.open(db_path, create=False).collection("code", create=False)
     reopened_stats = reopened.maintenance_stats()
     assert reopened_stats.record_count == 1
     assert reopened_stats.tombstone_count == 0
@@ -1105,10 +1105,10 @@ def test_multivector_dim128_exact_and_muvera_bindings(tmp_path) -> None:
         return values
 
     db_path = tmp_path / "db"
-    db = omendb.create(db_path)
+    db = omendb_vector.create(db_path)
     exact = db.collection(
         "colbert_exact",
-        config=omendb.CollectionConfig(
+        config=omendb_vector.CollectionConfig(
             dim=128,
             vector_mode="multi",
             index="flat",
@@ -1123,7 +1123,7 @@ def test_multivector_dim128_exact_and_muvera_bindings(tmp_path) -> None:
 
     muvera = db.collection(
         "colbert_muvera",
-        config=omendb.CollectionConfig(
+        config=omendb_vector.CollectionConfig(
             dim=128,
             vector_mode="multi",
             index="hnsw",
@@ -1142,7 +1142,7 @@ def test_multivector_dim128_exact_and_muvera_bindings(tmp_path) -> None:
     ]
     muvera.flush()
 
-    reopened = omendb.open(db_path, create=False).collection(
+    reopened = omendb_vector.open(db_path, create=False).collection(
         "colbert_muvera", create=False
     )
     rows = reopened.search_vectors([unit(3), unit(7)], k=1)
@@ -1158,9 +1158,9 @@ def test_muvera_multivector_lifecycle_filters_stale_candidates(tmp_path) -> None
         pytest.skip("Mojo extension is built for standard CPython ABI")
 
     db_path = tmp_path / "db"
-    docs = omendb.create(db_path).collection(
+    docs = omendb_vector.create(db_path).collection(
         "code",
-        config=omendb.CollectionConfig(
+        config=omendb_vector.CollectionConfig(
             dim=2,
             vector_mode="multi",
             index="hnsw",
@@ -1215,7 +1215,7 @@ def test_muvera_multivector_lifecycle_filters_stale_candidates(tmp_path) -> None
 
     docs.delete("stale")
     docs.flush()
-    reopened = omendb.open(db_path, create=False).collection("code", create=False)
+    reopened = omendb_vector.open(db_path, create=False).collection("code", create=False)
 
     unfiltered = [row.id for row in reopened.search_vectors(query, k=5)]
     assert "stale" not in unfiltered
@@ -1237,9 +1237,9 @@ def test_multivector_requires_vectors_shape() -> None:
     if "t" in sys.abiflags:
         pytest.skip("Mojo extension is built for standard CPython ABI")
 
-    docs = omendb.memory().collection(
+    docs = omendb_vector.memory().collection(
         "code",
-        config=omendb.CollectionConfig(
+        config=omendb_vector.CollectionConfig(
             dim=2, vector_mode="multi", index="flat", metric="dot"
         ),
     )
@@ -1249,14 +1249,14 @@ def test_multivector_requires_vectors_shape() -> None:
         docs.set("bad", vectors=[[1.0]])
     with pytest.raises(ValueError, match="include_vectors"):
         docs.get("bad", include_vector=True)
-    with pytest.raises(omendb.EngineUnavailableError, match="relationships"):
+    with pytest.raises(omendb_vector.EngineUnavailableError, match="relationships"):
         docs.set(
             "bad",
             vectors=[[1.0, 0.0]],
             relationships=[{"to": "other", "type": "calls"}],
         )
     with pytest.raises(ValueError, match="graph"):
-        omendb.CollectionConfig(
+        omendb_vector.CollectionConfig(
             dim=2, vector_mode="multi", index="flat", metric="dot", graph=True
         )
 
@@ -1265,9 +1265,9 @@ def test_multivector_search_rejects_dense_only_shapes() -> None:
     if "t" in sys.abiflags:
         pytest.skip("Mojo extension is built for standard CPython ABI")
 
-    docs = omendb.memory().collection(
+    docs = omendb_vector.memory().collection(
         "code",
-        config=omendb.CollectionConfig(
+        config=omendb_vector.CollectionConfig(
             dim=2,
             vector_mode="multi",
             index="flat",
@@ -1281,7 +1281,7 @@ def test_multivector_search_rejects_dense_only_shapes() -> None:
         docs.search(vector=[1.0, 0.0], mode="vector")
     with pytest.raises(ValueError, match="use vectors"):
         docs.search_hybrid(vector=[1.0, 0.0], text="function")
-    with pytest.raises(omendb.EngineUnavailableError, match="text-only"):
+    with pytest.raises(omendb_vector.EngineUnavailableError, match="text-only"):
         docs.search_text("function")
 
 
@@ -1289,9 +1289,9 @@ def test_multivector_filters_preserve_explanations() -> None:
     if "t" in sys.abiflags:
         pytest.skip("Mojo extension is built for standard CPython ABI")
 
-    docs = omendb.memory().collection(
+    docs = omendb_vector.memory().collection(
         "code",
-        config=omendb.CollectionConfig(
+        config=omendb_vector.CollectionConfig(
             dim=2,
             vector_mode="multi",
             index="flat",
@@ -1343,7 +1343,7 @@ def test_single_vector_search_rejects_multivector_shapes() -> None:
     if "t" in sys.abiflags:
         pytest.skip("Mojo extension is built for standard CPython ABI")
 
-    docs = omendb.memory().collection("docs", config=omendb.CollectionConfig(dim=2))
+    docs = omendb_vector.memory().collection("docs", config=omendb_vector.CollectionConfig(dim=2))
 
     with pytest.raises(ValueError, match="use vector"):
         docs.search(vectors=[[1.0, 0.0]], mode="vector")
@@ -1355,7 +1355,7 @@ def test_native_duplicate_set_replaces_single_vector_record() -> None:
     if "t" in sys.abiflags:
         pytest.skip("Mojo extension is built for standard CPython ABI")
 
-    docs = omendb.memory().collection("docs", config=omendb.CollectionConfig(dim=2))
+    docs = omendb_vector.memory().collection("docs", config=omendb_vector.CollectionConfig(dim=2))
     native = docs._native_handle()
     native.set("dup", [0.0, 0.0], None, None)
     native.set("dup", [10.0, 0.0], None, None)
@@ -1372,9 +1372,9 @@ def test_native_duplicate_set_replaces_multivector_record() -> None:
     if "t" in sys.abiflags:
         pytest.skip("Mojo extension is built for standard CPython ABI")
 
-    docs = omendb.memory().collection(
+    docs = omendb_vector.memory().collection(
         "docs",
-        config=omendb.CollectionConfig(
+        config=omendb_vector.CollectionConfig(
             dim=2, vector_mode="multi", index="flat", metric="dot"
         ),
     )
@@ -1394,9 +1394,9 @@ def test_multivector_update_preserves_omitted_text_and_metadata() -> None:
     if "t" in sys.abiflags:
         pytest.skip("Mojo extension is built for standard CPython ABI")
 
-    docs = omendb.memory().collection(
+    docs = omendb_vector.memory().collection(
         "code",
-        config=omendb.CollectionConfig(
+        config=omendb_vector.CollectionConfig(
             dim=2,
             vector_mode="multi",
             index="flat",
@@ -1438,9 +1438,9 @@ def test_multivector_update_can_clear_text_and_metadata() -> None:
     if "t" in sys.abiflags:
         pytest.skip("Mojo extension is built for standard CPython ABI")
 
-    docs = omendb.memory().collection(
+    docs = omendb_vector.memory().collection(
         "code",
-        config=omendb.CollectionConfig(
+        config=omendb_vector.CollectionConfig(
             dim=2,
             vector_mode="multi",
             index="flat",
@@ -1472,13 +1472,13 @@ def test_text_set_search_and_reopen(tmp_path) -> None:
         pytest.skip("Mojo extension is built for standard CPython ABI")
 
     db_path = tmp_path / "db"
-    docs = omendb.create(db_path).collection(
-        "docs", config=omendb.CollectionConfig(dim=2, text=True)
+    docs = omendb_vector.create(db_path).collection(
+        "docs", config=omendb_vector.CollectionConfig(dim=2, text=True)
     )
     docs.set(
         "install",
         vector=[0.0, 0.0],
-        text="Install OmenDB with uv",
+        text="Install OmenDB Vector with uv",
         metadata={"kind": "guide"},
     )
     docs.set("other", vector=[1.0, 0.0], text="Unrelated note")
@@ -1489,7 +1489,7 @@ def test_text_set_search_and_reopen(tmp_path) -> None:
     assert results[0].distance is None
 
     docs.flush()
-    reopened = omendb.open(db_path, create=False).collection("docs", create=False)
+    reopened = omendb_vector.open(db_path, create=False).collection("docs", create=False)
     assert reopened.config.text is True
     assert reopened.search_text("install", k=1)[0].id == "install"
     assert reopened.get("install", include_vector=True, include_text=False) == {
@@ -1505,8 +1505,8 @@ def test_update_delete_text_and_reopen(tmp_path) -> None:
         pytest.skip("Mojo extension is built for standard CPython ABI")
 
     db_path = tmp_path / "db"
-    docs = omendb.create(db_path).collection(
-        "docs", config=omendb.CollectionConfig(dim=2, text=True)
+    docs = omendb_vector.create(db_path).collection(
+        "docs", config=omendb_vector.CollectionConfig(dim=2, text=True)
     )
     docs.set("old", vector=[0.0, 0.0], text="install old", metadata={"version": 1})
     docs.update(
@@ -1519,7 +1519,7 @@ def test_update_delete_text_and_reopen(tmp_path) -> None:
     docs.delete("old")
     docs.flush()
 
-    reopened = omendb.open(db_path, create=False).collection("docs", create=False)
+    reopened = omendb_vector.open(db_path, create=False).collection("docs", create=False)
 
     assert reopened.get("old") is None
     assert [row.id for row in reopened.search_text("install", k=5)] == ["keep"]
@@ -1533,8 +1533,8 @@ def test_single_vector_lifecycle_matrix_reopen_filters_hybrid_graph(
         pytest.skip("Mojo extension is built for standard CPython ABI")
 
     db_path = tmp_path / "db"
-    docs = omendb.create(db_path).collection(
-        "docs", config=omendb.CollectionConfig(dim=2, text=True, graph=True)
+    docs = omendb_vector.create(db_path).collection(
+        "docs", config=omendb_vector.CollectionConfig(dim=2, text=True, graph=True)
     )
     docs.set("neighbor", vector=[1.0, 0.0], text="neighbor")
     docs.set(
@@ -1579,7 +1579,7 @@ def test_single_vector_lifecycle_matrix_reopen_filters_hybrid_graph(
 
     docs.delete("stale")
     docs.flush()
-    reopened = omendb.open(db_path, create=False).collection("docs", create=False)
+    reopened = omendb_vector.open(db_path, create=False).collection("docs", create=False)
 
     assert reopened.get("stale") is None
     assert reopened.neighbors("stale", type="links") == []
@@ -1602,8 +1602,8 @@ def test_update_preserves_omitted_text_and_metadata() -> None:
     if "t" in sys.abiflags:
         pytest.skip("Mojo extension is built for standard CPython ABI")
 
-    docs = omendb.memory().collection(
-        "docs", config=omendb.CollectionConfig(dim=2, text=True)
+    docs = omendb_vector.memory().collection(
+        "docs", config=omendb_vector.CollectionConfig(dim=2, text=True)
     )
     docs.set("a", vector=[0.0, 0.0], text="install guide", metadata={"version": 1})
 
@@ -1632,8 +1632,8 @@ def test_metadata_filters_for_vector_and_text() -> None:
     if "t" in sys.abiflags:
         pytest.skip("Mojo extension is built for standard CPython ABI")
 
-    docs = omendb.memory().collection(
-        "docs", config=omendb.CollectionConfig(dim=2, text=True)
+    docs = omendb_vector.memory().collection(
+        "docs", config=omendb_vector.CollectionConfig(dim=2, text=True)
     )
     docs.set(
         "project-task",
@@ -1667,8 +1667,8 @@ def test_filtered_text_uses_all_live_candidates_with_evidence() -> None:
     if "t" in sys.abiflags:
         pytest.skip("Mojo extension is built for standard CPython ABI")
 
-    docs = omendb.memory().collection(
-        "docs", config=omendb.CollectionConfig(dim=2, text=True)
+    docs = omendb_vector.memory().collection(
+        "docs", config=omendb_vector.CollectionConfig(dim=2, text=True)
     )
     for i in range(80):
         docs.set(
@@ -1698,8 +1698,8 @@ def test_include_exclude_id_constraints_for_search_modes() -> None:
     if "t" in sys.abiflags:
         pytest.skip("Mojo extension is built for standard CPython ABI")
 
-    docs = omendb.memory().collection(
-        "docs", config=omendb.CollectionConfig(dim=2, text=True)
+    docs = omendb_vector.memory().collection(
+        "docs", config=omendb_vector.CollectionConfig(dim=2, text=True)
     )
     docs.set("allowed", vector=[0.0, 0.0], text="install guide")
     docs.set("blocked", vector=[0.0, 0.0], text="install guide")
@@ -1744,9 +1744,9 @@ def test_include_exclude_id_constraints_for_multivector() -> None:
     if "t" in sys.abiflags:
         pytest.skip("Mojo extension is built for standard CPython ABI")
 
-    docs = omendb.memory().collection(
+    docs = omendb_vector.memory().collection(
         "code",
-        config=omendb.CollectionConfig(
+        config=omendb_vector.CollectionConfig(
             dim=2,
             vector_mode="multi",
             index="flat",
@@ -1793,13 +1793,13 @@ def test_hybrid_search_uses_rrf_with_score_evidence() -> None:
     if "t" in sys.abiflags:
         pytest.skip("Mojo extension is built for standard CPython ABI")
 
-    docs = omendb.memory().collection(
-        "docs", config=omendb.CollectionConfig(dim=2, text=True)
+    docs = omendb_vector.memory().collection(
+        "docs", config=omendb_vector.CollectionConfig(dim=2, text=True)
     )
     docs.set(
         "both",
         vector=[0.0, 0.0],
-        text="install omendb",
+        text="install omendb_vector",
         metadata={"kind": "guide"},
     )
     docs.set("vector-only", vector=[0.1, 0.0], text="release notes")
@@ -1852,15 +1852,15 @@ def test_hybrid_search_requires_explicit_text_index_and_parameters() -> None:
     if "t" in sys.abiflags:
         pytest.skip("Mojo extension is built for standard CPython ABI")
 
-    docs = omendb.memory().collection("docs", config=omendb.CollectionConfig(dim=2))
+    docs = omendb_vector.memory().collection("docs", config=omendb_vector.CollectionConfig(dim=2))
 
-    with pytest.raises(omendb.EngineUnavailableError, match="config.text=True"):
+    with pytest.raises(omendb_vector.EngineUnavailableError, match="config.text=True"):
         docs.search_hybrid(vector=[0.0, 0.0], text="install")
     with pytest.raises(ValueError, match="vector and text"):
         docs.search(vector=[0.0, 0.0], mode="hybrid")
 
-    text_docs = omendb.memory().collection(
-        "docs", config=omendb.CollectionConfig(dim=2, text=True)
+    text_docs = omendb_vector.memory().collection(
+        "docs", config=omendb_vector.CollectionConfig(dim=2, text=True)
     )
     text_docs.set("a", vector=[0.0, 0.0], text="install")
 
@@ -1874,8 +1874,8 @@ def test_hybrid_search_applies_metadata_filter() -> None:
     if "t" in sys.abiflags:
         pytest.skip("Mojo extension is built for standard CPython ABI")
 
-    docs = omendb.memory().collection(
-        "docs", config=omendb.CollectionConfig(dim=2, text=True)
+    docs = omendb_vector.memory().collection(
+        "docs", config=omendb_vector.CollectionConfig(dim=2, text=True)
     )
     docs.set("task", vector=[0.0, 0.0], text="install", metadata={"kind": "task"})
     docs.set(
@@ -1910,7 +1910,7 @@ def test_small_vector_filter_uses_exact_allowlist() -> None:
     if "t" in sys.abiflags:
         pytest.skip("Mojo extension is built for standard CPython ABI")
 
-    docs = omendb.memory().collection("docs", config=omendb.CollectionConfig(dim=2))
+    docs = omendb_vector.memory().collection("docs", config=omendb_vector.CollectionConfig(dim=2))
     for i in range(80):
         docs.set(
             f"common-{i}",
@@ -1932,7 +1932,7 @@ def test_large_vector_filter_returns_nearest_matches() -> None:
     if "t" in sys.abiflags:
         pytest.skip("Mojo extension is built for standard CPython ABI")
 
-    docs = omendb.memory().collection("docs", config=omendb.CollectionConfig(dim=2))
+    docs = omendb_vector.memory().collection("docs", config=omendb_vector.CollectionConfig(dim=2))
     for i in range(2_100):
         docs.set(f"match-{i}", vector=[float(i), 0.0], metadata={"bucket": "match"})
     for i in range(2_100):
@@ -1957,7 +1957,7 @@ def test_range_predicates() -> None:
     if "t" in sys.abiflags:
         pytest.skip("Mojo extension is built for standard CPython ABI")
 
-    docs = omendb.memory().collection("docs", config=omendb.CollectionConfig(dim=2))
+    docs = omendb_vector.memory().collection("docs", config=omendb_vector.CollectionConfig(dim=2))
     docs.set("low", vector=[0.0, 0.0], metadata={"score": 10})
     docs.set("mid", vector=[0.0, 0.0], metadata={"score": 50})
     docs.set("high", vector=[0.0, 0.0], metadata={"score": 90})
@@ -1996,8 +1996,8 @@ def test_snapshot_and_import(tmp_path) -> None:
     db_path = tmp_path / "db"
     snapshot_path = tmp_path / "snapshot"
     imported_path = tmp_path / "imported"
-    db = omendb.create(db_path)
-    docs = db.collection("docs", config=omendb.CollectionConfig(dim=2, text=True))
+    db = omendb_vector.create(db_path)
+    docs = db.collection("docs", config=omendb_vector.CollectionConfig(dim=2, text=True))
     docs.set(
         "install",
         vector=[0.0, 0.0],
@@ -2007,10 +2007,10 @@ def test_snapshot_and_import(tmp_path) -> None:
     )
 
     db.snapshot(snapshot_path)
-    imported = omendb.create(imported_path)
+    imported = omendb_vector.create(imported_path)
     imported.import_snapshot(snapshot_path)
 
-    reopened = omendb.open(imported_path, create=False).collection("docs", create=False)
+    reopened = omendb_vector.open(imported_path, create=False).collection("docs", create=False)
     assert reopened.get("install", include_vector=True, include_source=True, include_text=False) == {
         "id": "install",
         "metadata": {"kind": "guide"},
@@ -2025,8 +2025,8 @@ def test_graph_relationships_and_reopen(tmp_path) -> None:
         pytest.skip("Mojo extension is built for standard CPython ABI")
 
     db_path = tmp_path / "db"
-    docs = omendb.create(db_path).collection(
-        "docs", config=omendb.CollectionConfig(dim=2, graph=True)
+    docs = omendb_vector.create(db_path).collection(
+        "docs", config=omendb_vector.CollectionConfig(dim=2, graph=True)
     )
     docs.set("install", vector=[0.0, 0.0])
     docs.set("wheel", vector=[1.0, 0.0])
@@ -2051,7 +2051,7 @@ def test_graph_relationships_and_reopen(tmp_path) -> None:
     ]
 
     docs.flush()
-    reopened = omendb.open(db_path, create=False).collection("docs", create=False)
+    reopened = omendb_vector.open(db_path, create=False).collection("docs", create=False)
     assert reopened.config.graph is True
     assert reopened.neighbors("install", type="depends_on") == ["wheel"]
     assert reopened.remove_relationship("wheel", "release", type="depends_on")
@@ -2063,8 +2063,8 @@ def test_relationship_evidence_reports_bounded_path_and_reopen(tmp_path) -> None
         pytest.skip("Mojo extension is built for standard CPython ABI")
 
     db_path = tmp_path / "db"
-    docs = omendb.create(db_path).collection(
-        "docs", config=omendb.CollectionConfig(dim=2, graph=True)
+    docs = omendb_vector.create(db_path).collection(
+        "docs", config=omendb_vector.CollectionConfig(dim=2, graph=True)
     )
     docs.set("install", vector=[0.0, 0.0])
     docs.set("wheel", vector=[1.0, 0.0])
@@ -2077,7 +2077,7 @@ def test_relationship_evidence_reports_bounded_path_and_reopen(tmp_path) -> None
         "install", "release", max_depth=2, type="depends_on"
     )
 
-    assert evidence == omendb.RelationshipEvidence(
+    assert evidence == omendb_vector.RelationshipEvidence(
         from_id="install",
         to_id="release",
         included=True,
@@ -2087,7 +2087,7 @@ def test_relationship_evidence_reports_bounded_path_and_reopen(tmp_path) -> None
         type="depends_on",
         path=("install", "wheel", "release"),
         steps=(
-            omendb.RelationshipStep(
+            omendb_vector.RelationshipStep(
                 edge_id=0,
                 from_id="install",
                 to_id="wheel",
@@ -2095,7 +2095,7 @@ def test_relationship_evidence_reports_bounded_path_and_reopen(tmp_path) -> None
                 depth=1,
                 traversal_direction="out",
             ),
-            omendb.RelationshipStep(
+            omendb_vector.RelationshipStep(
                 edge_id=1,
                 from_id="wheel",
                 to_id="release",
@@ -2111,7 +2111,7 @@ def test_relationship_evidence_reports_bounded_path_and_reopen(tmp_path) -> None
     missing = docs.relationship_evidence(
         "install", "release", max_depth=1, type="depends_on"
     )
-    assert missing == omendb.RelationshipEvidence(
+    assert missing == omendb_vector.RelationshipEvidence(
         from_id="install",
         to_id="release",
         included=False,
@@ -2122,7 +2122,7 @@ def test_relationship_evidence_reports_bounded_path_and_reopen(tmp_path) -> None
     )
 
     docs.flush()
-    reopened = omendb.open(db_path, create=False).collection("docs", create=False)
+    reopened = omendb_vector.open(db_path, create=False).collection("docs", create=False)
 
     assert (
         reopened.relationship_evidence(
@@ -2136,8 +2136,8 @@ def test_delete_removes_record_from_graph_surface() -> None:
     if "t" in sys.abiflags:
         pytest.skip("Mojo extension is built for standard CPython ABI")
 
-    docs = omendb.memory().collection(
-        "docs", config=omendb.CollectionConfig(dim=2, graph=True)
+    docs = omendb_vector.memory().collection(
+        "docs", config=omendb_vector.CollectionConfig(dim=2, graph=True)
     )
     docs.set("install", vector=[0.0, 0.0])
     docs.set("wheel", vector=[1.0, 0.0])

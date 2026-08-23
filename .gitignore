@@ -1,0 +1,15 @@
+.pixi/
+.pytest_cache/
+.ruff_cache/
+.venv/
+__pycache__/
+*.py[cod]
+*.dylib
+*.o
+*.so
+
+# The Mojo engine is built by CI and package builds.
+# Local validation artifacts and downloaded benchmark data.
+ai/tmp/
+benchmarks/data/
+dist/

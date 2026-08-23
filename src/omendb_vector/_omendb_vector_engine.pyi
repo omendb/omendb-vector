@@ -1,4 +1,4 @@
-"""Type stubs for the compiled OmenDB Mojo engine extension."""
+"""Type stubs for the compiled OmenDB Vector Mojo engine extension."""
 
 from __future__ import annotations
 

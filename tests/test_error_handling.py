@@ -11,7 +11,7 @@ import sys
 
 import pytest
 
-import omendb
+import omendb_vector
 
 
 def _skip_if_free_threaded() -> None:
@@ -33,7 +33,7 @@ class TestDiskFullHandling:
 
         # create() should fail on read-only directory
         with pytest.raises(Exception):
-            omendb.create(str(readonly_dir / "db"))
+            omendb_vector.create(str(readonly_dir / "db"))
 
         # Cleanup
         readonly_dir.chmod(0o755)
@@ -43,7 +43,7 @@ class TestDiskFullHandling:
         _skip_if_free_threaded()
 
         # create() creates parent directories
-        db = omendb.create(str(tmp_path / "nonexistent" / "db"))
+        db = omendb_vector.create(str(tmp_path / "nonexistent" / "db"))
         assert db is not None
 
 
@@ -55,8 +55,8 @@ class TestCorruptDataHandling:
         _skip_if_free_threaded()
 
         # Create and flush a valid database
-        db = omendb.create(str(tmp_path / "db"))
-        col = db.collection("test", config=omendb.CollectionConfig(dim=2))
+        db = omendb_vector.create(str(tmp_path / "db"))
+        col = db.collection("test", config=omendb_vector.CollectionConfig(dim=2))
         col.set("a", vector=[1.0, 0.0])
         db.flush()
         db.close()
@@ -68,7 +68,7 @@ class TestCorruptDataHandling:
 
         # Should either detect corruption or handle it gracefully
         try:
-            result = omendb.check(str(tmp_path / "db"))
+            result = omendb_vector.check(str(tmp_path / "db"))
             # If check succeeds, it should either detect issues or report ok
             assert result.ok is True or len(result.issues) > 0
         except Exception:
@@ -80,8 +80,8 @@ class TestCorruptDataHandling:
         _skip_if_free_threaded()
 
         # Create and flush a valid database
-        db = omendb.create(str(tmp_path / "db"))
-        col = db.collection("test", config=omendb.CollectionConfig(dim=2))
+        db = omendb_vector.create(str(tmp_path / "db"))
+        col = db.collection("test", config=omendb_vector.CollectionConfig(dim=2))
         col.set("a", vector=[1.0, 0.0])
         db.flush()
         db.close()
@@ -93,7 +93,7 @@ class TestCorruptDataHandling:
 
         # Should detect issues
         try:
-            result = omendb.check(str(tmp_path / "db"))
+            result = omendb_vector.check(str(tmp_path / "db"))
             assert result.ok is False or len(result.issues) > 0
         except Exception:
             # Acceptable to raise on missing files
@@ -104,8 +104,8 @@ class TestCorruptDataHandling:
         _skip_if_free_threaded()
 
         # Create and flush a valid database
-        db = omendb.create(str(tmp_path / "db"))
-        col = db.collection("test", config=omendb.CollectionConfig(dim=2))
+        db = omendb_vector.create(str(tmp_path / "db"))
+        col = db.collection("test", config=omendb_vector.CollectionConfig(dim=2))
         col.set("a", vector=[1.0, 0.0])
         db.flush()
         db.close()
@@ -118,7 +118,7 @@ class TestCorruptDataHandling:
 
         # Should detect issues
         try:
-            result = omendb.check(str(tmp_path / "db"))
+            result = omendb_vector.check(str(tmp_path / "db"))
             assert result.ok is False or len(result.issues) > 0
         except Exception:
             # Acceptable to raise on corrupt files
@@ -132,8 +132,8 @@ class TestInvalidUsageHandling:
         """Wrong vector dimension raises error."""
         _skip_if_free_threaded()
 
-        db = omendb.create(str(tmp_path / "db"))
-        col = db.collection("test", config=omendb.CollectionConfig(dim=2))
+        db = omendb_vector.create(str(tmp_path / "db"))
+        col = db.collection("test", config=omendb_vector.CollectionConfig(dim=2))
 
         with pytest.raises(Exception):
             col.set("a", vector=[1.0])  # Wrong dimension
@@ -142,8 +142,8 @@ class TestInvalidUsageHandling:
         """Missing required fields raises error."""
         _skip_if_free_threaded()
 
-        db = omendb.create(str(tmp_path / "db"))
-        col = db.collection("test", config=omendb.CollectionConfig(dim=2))
+        db = omendb_vector.create(str(tmp_path / "db"))
+        col = db.collection("test", config=omendb_vector.CollectionConfig(dim=2))
 
         with pytest.raises(Exception):
             col.set()  # Missing id
@@ -152,8 +152,8 @@ class TestInvalidUsageHandling:
         """Invalid search parameters raises error."""
         _skip_if_free_threaded()
 
-        db = omendb.create(str(tmp_path / "db"))
-        col = db.collection("test", config=omendb.CollectionConfig(dim=2))
+        db = omendb_vector.create(str(tmp_path / "db"))
+        col = db.collection("test", config=omendb_vector.CollectionConfig(dim=2))
         col.set("a", vector=[1.0, 0.0])
 
         # Negative k
@@ -168,8 +168,8 @@ class TestInvalidUsageHandling:
         """Get nonexistent item returns None."""
         _skip_if_free_threaded()
 
-        db = omendb.create(str(tmp_path / "db"))
-        col = db.collection("test", config=omendb.CollectionConfig(dim=2))
+        db = omendb_vector.create(str(tmp_path / "db"))
+        col = db.collection("test", config=omendb_vector.CollectionConfig(dim=2))
 
         result = col.get("nonexistent")
         assert result is None
@@ -178,8 +178,8 @@ class TestInvalidUsageHandling:
         """Delete nonexistent item raises error or is no-op."""
         _skip_if_free_threaded()
 
-        db = omendb.create(str(tmp_path / "db"))
-        col = db.collection("test", config=omendb.CollectionConfig(dim=2))
+        db = omendb_vector.create(str(tmp_path / "db"))
+        col = db.collection("test", config=omendb_vector.CollectionConfig(dim=2))
 
         # delete() may raise or be a no-op for nonexistent items
         try:
@@ -191,8 +191,8 @@ class TestInvalidUsageHandling:
         """Update nonexistent item raises error."""
         _skip_if_free_threaded()
 
-        db = omendb.create(str(tmp_path / "db"))
-        col = db.collection("test", config=omendb.CollectionConfig(dim=2))
+        db = omendb_vector.create(str(tmp_path / "db"))
+        col = db.collection("test", config=omendb_vector.CollectionConfig(dim=2))
 
         with pytest.raises(Exception):
             col.update("nonexistent", text="new text")
@@ -201,9 +201,9 @@ class TestInvalidUsageHandling:
         """Duplicate collection creation returns existing collection."""
         _skip_if_free_threaded()
 
-        db = omendb.create(str(tmp_path / "db"))
-        col1 = db.collection("test", config=omendb.CollectionConfig(dim=2))
-        col2 = db.collection("test", config=omendb.CollectionConfig(dim=2))
+        db = omendb_vector.create(str(tmp_path / "db"))
+        col1 = db.collection("test", config=omendb_vector.CollectionConfig(dim=2))
+        col2 = db.collection("test", config=omendb_vector.CollectionConfig(dim=2))
 
         # Should return the same collection
         assert col1 is not None
@@ -213,7 +213,7 @@ class TestInvalidUsageHandling:
         """Get nonexistent collection raises error."""
         _skip_if_free_threaded()
 
-        db = omendb.create(str(tmp_path / "db"))
+        db = omendb_vector.create(str(tmp_path / "db"))
 
         with pytest.raises(Exception):
             db.collection("nonexistent")
@@ -222,8 +222,8 @@ class TestInvalidUsageHandling:
         """Operations on closed database may succeed or fail."""
         _skip_if_free_threaded()
 
-        db = omendb.create(str(tmp_path / "db"))
-        col = db.collection("test", config=omendb.CollectionConfig(dim=2))
+        db = omendb_vector.create(str(tmp_path / "db"))
+        col = db.collection("test", config=omendb_vector.CollectionConfig(dim=2))
         db.close()
 
         # close() may or may not affect the collection handle
@@ -240,11 +240,11 @@ class TestResourceExhaustion:
         """Creating many collections works."""
         _skip_if_free_threaded()
 
-        db = omendb.create(str(tmp_path / "db"))
+        db = omendb_vector.create(str(tmp_path / "db"))
 
         # Create 100 collections
         for i in range(100):
-            col = db.collection(f"col_{i}", config=omendb.CollectionConfig(dim=2))
+            col = db.collection(f"col_{i}", config=omendb_vector.CollectionConfig(dim=2))
             col.set("a", vector=[1.0, 0.0])
 
         # All should be accessible
@@ -256,8 +256,8 @@ class TestResourceExhaustion:
         """Many items in a single collection works."""
         _skip_if_free_threaded()
 
-        db = omendb.create(str(tmp_path / "db"))
-        col = db.collection("test", config=omendb.CollectionConfig(dim=2))
+        db = omendb_vector.create(str(tmp_path / "db"))
+        col = db.collection("test", config=omendb_vector.CollectionConfig(dim=2))
 
         # Add 1000 items
         for i in range(1000):
@@ -271,8 +271,8 @@ class TestResourceExhaustion:
         """Multiple flush/reopen cycles work."""
         _skip_if_free_threaded()
 
-        db = omendb.create(str(tmp_path / "db"))
-        col = db.collection("test", config=omendb.CollectionConfig(dim=2))
+        db = omendb_vector.create(str(tmp_path / "db"))
+        col = db.collection("test", config=omendb_vector.CollectionConfig(dim=2))
 
         # 10 flush/reopen cycles
         for cycle in range(10):
@@ -280,7 +280,7 @@ class TestResourceExhaustion:
             db.flush()
             db.close()
 
-            db = omendb.open(str(tmp_path / "db"))
+            db = omendb_vector.open(str(tmp_path / "db"))
             col = db.collection("test")
 
         # All items should be present
@@ -295,8 +295,8 @@ class TestErrorRecovery:
         """Database recovers after invalid operation."""
         _skip_if_free_threaded()
 
-        db = omendb.create(str(tmp_path / "db"))
-        col = db.collection("test", config=omendb.CollectionConfig(dim=2))
+        db = omendb_vector.create(str(tmp_path / "db"))
+        col = db.collection("test", config=omendb_vector.CollectionConfig(dim=2))
 
         # Valid operation
         col.set("a", vector=[1.0, 0.0])
@@ -315,8 +315,8 @@ class TestErrorRecovery:
         """Can flush after error."""
         _skip_if_free_threaded()
 
-        db = omendb.create(str(tmp_path / "db"))
-        col = db.collection("test", config=omendb.CollectionConfig(dim=2))
+        db = omendb_vector.create(str(tmp_path / "db"))
+        col = db.collection("test", config=omendb_vector.CollectionConfig(dim=2))
 
         # Valid operation
         col.set("a", vector=[1.0, 0.0])
@@ -331,6 +331,6 @@ class TestErrorRecovery:
         db.flush()
 
         # Reopen and verify
-        db2 = omendb.open(str(tmp_path / "db"))
+        db2 = omendb_vector.open(str(tmp_path / "db"))
         col2 = db2.collection("test")
         assert col2.get("a") is not None

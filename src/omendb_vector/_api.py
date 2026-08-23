@@ -523,13 +523,13 @@ class Collection:
                 # (the engine requires at least one vector-backed text doc)
                 try:
                     native.set_text(
-                        "__omendb_text_seed__",
+                        "__omendb_vector_text_seed__",
                         [0.0] * self.config.dim,
                         "__seed__",
                         None,
                         None,
                     )
-                    native.delete("__omendb_text_seed__")
+                    native.delete("__omendb_vector_text_seed__")
                 except Exception:
                     pass
             self._text_only_store[id] = {
@@ -2010,7 +2010,7 @@ class Collection:
         )
         parent = self.path.parent
         tmp_path = Path(
-            tempfile.mkdtemp(prefix=f".omendb-{self.name}-vacuum-", dir=parent)
+            tempfile.mkdtemp(prefix=f".omendb_vector-{self.name}-vacuum-", dir=parent)
         )
         backup_path = _collection_backup_path(self.path)
         replacement = Collection(

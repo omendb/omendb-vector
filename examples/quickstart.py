@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""OmenDB 5-minute quickstart: index a directory, search with evidence.
+"""OmenDB Vector 5-minute quickstart: index a directory, search with evidence.
 
 Usage:
     python quickstart.py index ./my-project     # Index files
@@ -7,7 +7,7 @@ Usage:
     python quickstart.py search "database" --hybrid  # Hybrid search
     python quickstart.py search "class" --filter ext:.py  # Filtered search
 
-This is the first public proof demo for OmenDB-Mojo.
+This is the first public proof demo for OmenDB Vector.
 Shows: text + vector + hybrid search, hard filters, source evidence,
 delete/supersede lifecycle, flush/reopen persistence.
 """
@@ -147,7 +147,7 @@ def search_demo(
 
 def lifecycle_demo(collection: Any, db_path: Path) -> None:
     """Demonstrate delete, supersede, flush, reopen."""
-    import omendb
+    import omendb_vector
 
     print("\n=== Lifecycle: delete + superseede + flush + reopen ===")
 
@@ -193,7 +193,7 @@ def lifecycle_demo(collection: Any, db_path: Path) -> None:
 
     # Reopen
     print("\n--- Reopening database ---")
-    db2 = omendb.open(str(db_path), create=False)
+    db2 = omendb_vector.open(str(db_path), create=False)
     col2 = db2.collection("files", create=False)
     results = col2.search_text("import", k=3)
     print(f"  ✓ Reopened: {len(results)} results for 'import'")
@@ -210,7 +210,7 @@ def lifecycle_demo(collection: Any, db_path: Path) -> None:
 
 def main() -> None:
     parser = argparse.ArgumentParser(
-        description="OmenDB quickstart: index and search files locally"
+        description="OmenDB Vector quickstart: index and search files locally"
     )
     sub = parser.add_subparsers(dest="command", required=True)
 
@@ -218,7 +218,7 @@ def main() -> None:
     idx = sub.add_parser("index", help="Index a directory")
     idx.add_argument("directory", type=Path, help="Directory to index")
     idx.add_argument(
-        "--db", type=Path, default=Path(".omendb_demo"), help="Database path"
+        "--db", type=Path, default=Path(".omendb_vector_demo"), help="Database path"
     )
     idx.add_argument(
         "--ext", type=str, default=None, help="Comma-separated extensions (e.g. .py,.md)"
@@ -229,7 +229,7 @@ def main() -> None:
     srch.add_argument("query", type=str, help="Search query")
     srch.add_argument("--k", type=int, default=5, help="Number of results")
     srch.add_argument(
-        "--db", type=Path, default=Path(".omendb_demo"), help="Database path"
+        "--db", type=Path, default=Path(".omendb_vector_demo"), help="Database path"
     )
     srch.add_argument(
         "--ext", type=str, default=None, help="Filter by extension (e.g. .py)"
@@ -240,7 +240,7 @@ def main() -> None:
 
     args = parser.parse_args()
 
-    import omendb
+    import omendb_vector
 
     if args.command == "index":
         root = args.directory.expanduser().resolve()
@@ -249,10 +249,10 @@ def main() -> None:
             sys.exit(1)
 
         print(f"Indexing {root} ...", file=sys.stderr)
-        db = omendb.open(str(args.db), create=True)
+        db = omendb_vector.open(str(args.db), create=True)
         col = db.collection(
             "files",
-            config=omendb.CollectionConfig(dim=2, text=True),
+            config=omendb_vector.CollectionConfig(dim=2, text=True),
         )
 
         exts = set(args.ext.split(",")) if args.ext else None
@@ -271,7 +271,7 @@ def main() -> None:
             print(f"Error: no database at {db_path}. Run 'index' first.", file=sys.stderr)
             sys.exit(1)
 
-        db = omendb.open(str(db_path), create=False)
+        db = omendb_vector.open(str(db_path), create=False)
         col = db.collection("files", create=False)
 
         md_filter = None

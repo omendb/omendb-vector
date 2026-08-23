@@ -19,9 +19,9 @@ def run(args: argparse.Namespace) -> None:
     if not (omengrep_repo / "Cargo.toml").exists():
         raise FileNotFoundError(f"{omengrep_repo} is not an omengrep checkout")
 
-    mojo_rust_crate = (args.omendb_mojo_root / "rust" / "omendb").resolve()
+    mojo_rust_crate = (args.omendb_vector_mojo_root / "rust" / "omendb_vector").resolve()
     if not (mojo_rust_crate / "Cargo.toml").exists():
-        raise FileNotFoundError(f"{mojo_rust_crate} is not the Rust OmenDB shim")
+        raise FileNotFoundError(f"{mojo_rust_crate} is not the Rust OmenDB Vector shim")
 
     work_parent = args.workdir or Path(tempfile.mkdtemp(prefix="omengrep-mojo-smoke-"))
     work_parent = work_parent.expanduser().resolve()
@@ -35,7 +35,7 @@ def run(args: argparse.Namespace) -> None:
         workdir,
         ignore=shutil.ignore_patterns(".git", ".og", ".ruff_cache", "target"),
     )
-    _patch_omendb_dependency(workdir / "Cargo.toml", mojo_rust_crate)
+    _patch_omendb_vector_dependency(workdir / "Cargo.toml", mojo_rust_crate)
 
     env = os.environ.copy()
     env["CARGO_TARGET_DIR"] = str(args.target_dir.expanduser().resolve())
@@ -47,12 +47,12 @@ def run(args: argparse.Namespace) -> None:
         "--all-targets",
     ]
     print("running:", " ".join(command))
-    print("patched omendb path:", mojo_rust_crate)
+    print("patched omendb_vector path:", mojo_rust_crate)
     subprocess.run(command, cwd=workdir, env=env, check=True)
 
     if not args.check_only:
         _run_cli_smoke(
-            omendb_mojo_root=args.omendb_mojo_root.resolve(),
+            omendb_vector_mojo_root=args.omendb_vector_mojo_root.resolve(),
             omengrep_workdir=workdir,
             omengrep_repo=omengrep_repo,
             work_parent=work_parent,
@@ -63,30 +63,30 @@ def run(args: argparse.Namespace) -> None:
         shutil.rmtree(work_parent, ignore_errors=True)
 
 
-def _patch_omendb_dependency(cargo_toml: Path, mojo_rust_crate: Path) -> None:
+def _patch_omendb_vector_dependency(cargo_toml: Path, mojo_rust_crate: Path) -> None:
     text = cargo_toml.read_text(encoding="utf-8")
-    replacement = f'omendb = {{ path = "{mojo_rust_crate.as_posix()}" }}'
+    replacement = f'omendb_vector = {{ path = "{mojo_rust_crate.as_posix()}" }}'
     patched, count = re.subn(
-        r"^omendb\s*=.*$",
+        r"^omendb_vector\s*=.*$",
         replacement,
         text,
         count=1,
         flags=re.MULTILINE,
     )
     if count != 1:
-        raise ValueError(f"could not find omendb dependency in {cargo_toml}")
+        raise ValueError(f"could not find omendb_vector dependency in {cargo_toml}")
     cargo_toml.write_text(patched, encoding="utf-8")
 
 
 def _run_cli_smoke(
     *,
-    omendb_mojo_root: Path,
+    omendb_vector_mojo_root: Path,
     omengrep_workdir: Path,
     omengrep_repo: Path,
     work_parent: Path,
     env: dict[str, str],
 ) -> None:
-    dylib_path = work_parent / "libomendb_multivector_c_abi.dylib"
+    dylib_path = work_parent / "libomendb_vector_multivector_c_abi.dylib"
     mojo_command = [
         "pixi",
         "run",
@@ -99,7 +99,7 @@ def _run_cli_smoke(
         str(dylib_path),
     ]
     print("running:", " ".join(mojo_command))
-    subprocess.run(mojo_command, cwd=omendb_mojo_root, env=env, check=True)
+    subprocess.run(mojo_command, cwd=omendb_vector_mojo_root, env=env, check=True)
 
     fixture_dir = work_parent / "fixture"
     fixture_dir.mkdir(parents=True, exist_ok=True)
@@ -107,7 +107,7 @@ def _run_cli_smoke(
         if source.is_file():
             shutil.copy2(source, fixture_dir / source.name)
 
-    runtime_env = env | {"OMENDB_MOJO_DYLIB": str(dylib_path)}
+    runtime_env = env | {"OMENDB_VECTOR_MOJO_DYLIB": str(dylib_path)}
     build_command = [
         "cargo",
         "run",
@@ -157,7 +157,7 @@ def parse_args() -> argparse.Namespace:
         )
     )
     parser.add_argument("--omengrep-repo", type=Path, default=DEFAULT_OMENGREP_REPO)
-    parser.add_argument("--omendb-mojo-root", type=Path, default=REPO_ROOT)
+    parser.add_argument("--omendb-vector-root", type=Path, default=REPO_ROOT)
     parser.add_argument("--target-dir", type=Path, default=DEFAULT_TARGET_DIR)
     parser.add_argument(
         "--workdir",

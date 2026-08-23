@@ -1,9 +1,9 @@
-"""Tests for OmenDB dimension support."""
+"""Tests for OmenDB Vector dimension support."""
 
 import pytest
 
-import omendb
-from omendb._dimensions import (
+import omendb_vector
+from omendb_vector._dimensions import (
     DENSE_DYNAMIC_FLAT_MAX_DIM,
     DENSE_OPTIMIZED_DIMS,
     MULTIVECTOR_EXACT_DIMS,
@@ -116,7 +116,7 @@ class TestDimensionSupportAPI:
 
     def test_dimension_support_single_hnsw(self):
         """Test dimension support query for single-vector HNSW."""
-        support = omendb.dimension_support(vector_mode="single", index="hnsw")
+        support = omendb_vector.dimension_support(vector_mode="single", index="hnsw")
         assert isinstance(support, DimensionSupport)
         assert support.optimized == DENSE_OPTIMIZED_DIMS
         assert support.dynamic is False
@@ -124,7 +124,7 @@ class TestDimensionSupportAPI:
 
     def test_dimension_support_single_flat(self):
         """Test dimension support query for single-vector flat."""
-        support = omendb.dimension_support(vector_mode="single", index="flat")
+        support = omendb_vector.dimension_support(vector_mode="single", index="flat")
         assert isinstance(support, DimensionSupport)
         assert support.optimized == DENSE_OPTIMIZED_DIMS
         assert support.dynamic is True
@@ -132,31 +132,31 @@ class TestDimensionSupportAPI:
 
     def test_dimension_support_multi_exact(self):
         """Test dimension support query for multi-vector exact."""
-        support = omendb.dimension_support(vector_mode="multi", encoding="none")
+        support = omendb_vector.dimension_support(vector_mode="multi", encoding="none")
         assert isinstance(support, DimensionSupport)
         assert support.optimized == MULTIVECTOR_EXACT_DIMS
         assert support.dynamic is False
 
     def test_dimension_support_multi_muvera(self):
         """Test dimension support query for multi-vector MuVERA."""
-        support = omendb.dimension_support(vector_mode="multi", encoding="muvera")
+        support = omendb_vector.dimension_support(vector_mode="multi", encoding="muvera")
         assert isinstance(support, DimensionSupport)
         assert support.optimized == MULTIVECTOR_MUVERA_DIMS
         assert support.dynamic is False
 
     def test_supported_dimensions_convenience(self):
         """Test the supported_dimensions() convenience function."""
-        dims = omendb.supported_dimensions(vector_mode="single", index="hnsw")
+        dims = omendb_vector.supported_dimensions(vector_mode="single", index="hnsw")
         assert dims == DENSE_OPTIMIZED_DIMS
 
-        dims = omendb.supported_dimensions(vector_mode="multi", encoding="none")
+        dims = omendb_vector.supported_dimensions(vector_mode="multi", encoding="none")
         assert dims == MULTIVECTOR_EXACT_DIMS
 
     def test_dimension_support_in_all(self):
         """Verify dimension_support is exported in __all__."""
-        assert "dimension_support" in omendb.__all__
-        assert "supported_dimensions" in omendb.__all__
-        assert "DimensionSupport" in omendb.__all__
+        assert "dimension_support" in omendb_vector.__all__
+        assert "supported_dimensions" in omendb_vector.__all__
+        assert "DimensionSupport" in omendb_vector.__all__
 
 
 class TestCollectionConfigValidation:
@@ -165,29 +165,29 @@ class TestCollectionConfigValidation:
     def test_valid_dense_hnsw_dims(self):
         """Test that optimized dims are accepted for HNSW."""
         for dim in DENSE_OPTIMIZED_DIMS:
-            config = omendb.CollectionConfig(dim=dim, index="hnsw")
+            config = omendb_vector.CollectionConfig(dim=dim, index="hnsw")
             assert config.dim == dim
 
     def test_invalid_dense_hnsw_dim(self):
         """Test that non-optimized dims are rejected for HNSW."""
         with pytest.raises(ValueError, match="dim=257"):
-            omendb.CollectionConfig(dim=257, index="hnsw")
+            omendb_vector.CollectionConfig(dim=257, index="hnsw")
 
     def test_valid_dense_flat_dims(self):
         """Test that arbitrary dims up to max are accepted for flat."""
         for dim in [257, 4096, 8192]:
-            config = omendb.CollectionConfig(dim=dim, index="flat")
+            config = omendb_vector.CollectionConfig(dim=dim, index="flat")
             assert config.dim == dim
 
     def test_invalid_dense_flat_dim(self):
         """Test that dims exceeding max are rejected for flat."""
         with pytest.raises(ValueError, match="dim=8193"):
-            omendb.CollectionConfig(dim=8193, index="flat")
+            omendb_vector.CollectionConfig(dim=8193, index="flat")
 
     def test_valid_multivector_dims(self):
         """Test that valid multivector dims are accepted."""
         for dim in MULTIVECTOR_EXACT_DIMS:
-            config = omendb.CollectionConfig(
+            config = omendb_vector.CollectionConfig(
                 dim=dim, vector_mode="multi", metric="dot", index="flat"
             )
             assert config.dim == dim
@@ -195,7 +195,7 @@ class TestCollectionConfigValidation:
     def test_invalid_multivector_dim(self):
         """Test that invalid multivector dims are rejected."""
         with pytest.raises(ValueError, match="dim=256"):
-            omendb.CollectionConfig(
+            omendb_vector.CollectionConfig(
                 dim=256, vector_mode="multi", metric="dot", index="flat"
             )
 

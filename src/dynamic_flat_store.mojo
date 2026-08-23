@@ -99,7 +99,7 @@ struct DynamicFlatVectorStore(Movable):
         var basename = String(os.path.basename(path))
         var tmp_path = String(
             tempfile.mkdtemp(
-                prefix=".omendb-dynamic-" + basename + "-", dir=parent
+                prefix=".omendb_vector-dynamic-" + basename + "-", dir=parent
             )
         )
         var backup_path = path + ".bak"

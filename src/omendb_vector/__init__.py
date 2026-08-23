@@ -1,4 +1,4 @@
-"""Local Python API for OmenDB."""
+"""Local Python API for OmenDB Vector."""
 
 from ._api import (
     CheckIssue,

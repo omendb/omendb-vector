@@ -6,13 +6,13 @@ import tempfile
 from collections.abc import Sequence
 from pathlib import Path
 
-import omendb
+import omendb_vector
 
 MEMORIES = [
     {
         "id": "task:install",
         "vector": [0.02, 0.0],
-        "text": "Install OmenDB locally with uv and standard CPython.",
+        "text": "Install OmenDB Vector locally with uv and standard CPython.",
         "metadata": {"scope": "project", "kind": "task"},
     },
     {
@@ -24,7 +24,7 @@ MEMORIES = [
     {
         "id": "decision:hnsw",
         "vector": [0.9, 0.05],
-        "text": "HNSW is the default local serving index for OmenDB.",
+        "text": "HNSW is the default local serving index for OmenDB Vector.",
         "metadata": {"scope": "design", "kind": "decision"},
     },
     {
@@ -57,9 +57,9 @@ def run(root: Path) -> None:
     snapshot_path = root / "agent-memory-snapshot"
     imported_path = root / "agent-memory-imported"
 
-    db = omendb.create(db_path)
+    db = omendb_vector.create(db_path)
     memories = db.collection(
-        "memories", config=omendb.CollectionConfig(dim=2, text=True)
+        "memories", config=omendb_vector.CollectionConfig(dim=2, text=True)
     )
     memories.set_many(MEMORIES)
 
@@ -82,14 +82,14 @@ def run(root: Path) -> None:
     assert _rounded_vector(task["vector"]) == [0.02, 0.0]
 
     db.close()
-    reopened = omendb.open(db_path, create=False).collection("memories", create=False)
+    reopened = omendb_vector.open(db_path, create=False).collection("memories", create=False)
     assert reopened.search_text("HNSW default", k=1)[0].id == "decision:hnsw"
     assert reopened.search_vector([0.18, 0.86], k=1)[0].id == "note:graph"
 
-    omendb.open(db_path, create=False).snapshot(snapshot_path)
-    imported = omendb.create(imported_path)
+    omendb_vector.open(db_path, create=False).snapshot(snapshot_path)
+    imported = omendb_vector.create(imported_path)
     imported.import_snapshot(snapshot_path)
-    imported_memories = omendb.open(imported_path, create=False).collection(
+    imported_memories = omendb_vector.open(imported_path, create=False).collection(
         "memories", create=False
     )
     assert imported_memories.get("decision:auto") == {
@@ -110,7 +110,7 @@ def main() -> None:
     args = parser.parse_args()
 
     if args.root is None:
-        with tempfile.TemporaryDirectory(prefix="omendb-agent-memory-") as tmp:
+        with tempfile.TemporaryDirectory(prefix="omendb_vector-agent-memory-") as tmp:
             run(Path(tmp))
         return
 

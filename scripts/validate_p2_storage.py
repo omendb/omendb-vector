@@ -11,7 +11,7 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
 CORE_TY_TARGETS = [
-    "src/omendb",
+    "src/omendb_vector",
     "tests/test_python_api.py",
     "scripts/agent_memory_smoke.py",
     "scripts/agent_memory_release_smoke.py",
@@ -23,23 +23,23 @@ GRAPH_SMOKE = """
 import tempfile
 from pathlib import Path
 
-import omendb
+import omendb_vector
 
-with tempfile.TemporaryDirectory(prefix="omendb-graph-wheel-") as tmp:
-    docs = omendb.create(Path(tmp) / "db").collection(
-        "docs", config=omendb.CollectionConfig(dim=2, graph=True)
+with tempfile.TemporaryDirectory(prefix="omendb_vector-graph-wheel-") as tmp:
+    docs = omendb_vector.create(Path(tmp) / "db").collection(
+        "docs", config=omendb_vector.CollectionConfig(dim=2, graph=True)
     )
     docs.set("a", vector=[0.0, 0.0])
     docs.set("b", vector=[1.0, 0.0])
     docs.add_relationship("a", "b", type="references")
     assert docs.neighbors("a", type="references") == ["b"]
     docs.flush()
-    reopened = omendb.open(Path(tmp) / "db", create=False).collection(
+    reopened = omendb_vector.open(Path(tmp) / "db", create=False).collection(
         "docs", create=False
     )
     assert reopened.shortest_path("a", "b") == ["a", "b"]
 
-    wide = omendb.memory().collection("wide", config=omendb.CollectionConfig(dim=128))
+    wide = omendb_vector.memory().collection("wide", config=omendb_vector.CollectionConfig(dim=128))
     origin = [0.0] * 128
     right = [0.0] * 128
     right[0] = 1.0
@@ -58,7 +58,7 @@ def run(command: Sequence[str], *, cwd: Path = ROOT) -> None:
 
 
 def standard_python() -> str:
-    configured = os.environ.get("OMENDB_STANDARD_PYTHON")
+    configured = os.environ.get("OMENDB_VECTOR_STANDARD_PYTHON")
     if configured:
         return configured
 
@@ -88,7 +88,7 @@ def standard_python() -> str:
 
     raise RuntimeError(
         "native engine validation requires standard CPython; set "
-        "OMENDB_STANDARD_PYTHON=/path/to/python"
+        "OMENDB_VECTOR_STANDARD_PYTHON=/path/to/python"
     )
 
 
@@ -112,13 +112,13 @@ def wheel_smoke() -> None:
     standard = standard_python()
     run(["uv", "build", "--wheel"])
     wheels = sorted(
-        (ROOT / "dist").glob("omendb-*.whl"), key=lambda p: p.stat().st_mtime
+        (ROOT / "dist").glob("omendb_vector-*.whl"), key=lambda p: p.stat().st_mtime
     )
     if not wheels:
-        raise RuntimeError("uv build did not produce an omendb wheel")
+        raise RuntimeError("uv build did not produce an omendb-vector wheel")
 
     wheel = wheels[-1]
-    with tempfile.TemporaryDirectory(prefix="omendb-p2-wheel-") as tmp:
+    with tempfile.TemporaryDirectory(prefix="omendb_vector-p2-wheel-") as tmp:
         venv = Path(tmp) / "venv"
         run(["uv", "venv", "--python", standard, str(venv)])
         python = venv / "bin" / "python"

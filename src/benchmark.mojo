@@ -173,7 +173,7 @@ def main() raises:
     var runs = 7
     var count = 2000
     var num_queries = 100
-    print("OmenDB-Mojo benchmark gate")
+    print("OmenDB Vector benchmark gate")
     print(
         "methodology: deterministic synthetic vectors, warmups=",
         warmups,

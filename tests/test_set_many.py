@@ -9,7 +9,7 @@ import sys
 
 import pytest
 
-import omendb
+import omendb_vector
 
 
 def _skip_if_free_threaded() -> None:
@@ -19,8 +19,8 @@ def _skip_if_free_threaded() -> None:
 
 def _create_collection(tmp_path, name="test"):
     """Create a test collection."""
-    db = omendb.create(str(tmp_path / "db"))
-    col = db.collection(name, config=omendb.CollectionConfig(dim=2, text=True))
+    db = omendb_vector.create(str(tmp_path / "db"))
+    col = db.collection(name, config=omendb_vector.CollectionConfig(dim=2, text=True))
     return col
 
 
@@ -183,8 +183,8 @@ class TestSetManyPersistence:
         """set_many records persist across flush/reopen."""
         _skip_if_free_threaded()
 
-        db = omendb.create(str(tmp_path / "db"))
-        col = db.collection("test", config=omendb.CollectionConfig(dim=2, text=True))
+        db = omendb_vector.create(str(tmp_path / "db"))
+        col = db.collection("test", config=omendb_vector.CollectionConfig(dim=2, text=True))
 
         records = [
             {"id": "a", "vector": [1.0, 0.0], "text": "Hello"},
@@ -194,7 +194,7 @@ class TestSetManyPersistence:
         db.flush()
 
         # Reopen
-        db2 = omendb.open(str(tmp_path / "db"))
+        db2 = omendb_vector.open(str(tmp_path / "db"))
         col2 = db2.collection("test")
 
         assert col2.get("a") is not None
@@ -337,8 +337,8 @@ class TestSetManyTransactionSemantics:
         """set_many can flush after partial failure."""
         _skip_if_free_threaded()
 
-        db = omendb.create(str(tmp_path / "db"))
-        col = db.collection("test", config=omendb.CollectionConfig(dim=2, text=True))
+        db = omendb_vector.create(str(tmp_path / "db"))
+        col = db.collection("test", config=omendb_vector.CollectionConfig(dim=2, text=True))
 
         # Valid, then invalid
         records = [
@@ -353,6 +353,6 @@ class TestSetManyTransactionSemantics:
         db.flush()
 
         # Reopen and check
-        db2 = omendb.open(str(tmp_path / "db"))
+        db2 = omendb_vector.open(str(tmp_path / "db"))
         col2 = db2.collection("test")
         assert col2.get("a") is not None

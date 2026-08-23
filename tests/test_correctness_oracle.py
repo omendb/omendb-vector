@@ -31,7 +31,7 @@ from pathlib import Path
 
 import pytest
 
-import omendb
+import omendb_vector
 
 # ---------------------------------------------------------------------------
 # Deterministic corpus: 5 vectors in 2D space (L2 metric)
@@ -109,12 +109,12 @@ def _seed_collection(
     Returns (db, col).
     """
     if db_path is None:
-        db = omendb.memory()
+        db = omendb_vector.memory()
     else:
-        db = omendb.create(db_path)
+        db = omendb_vector.create(db_path)
     col = db.collection(
         name,
-        config=omendb.CollectionConfig(dim=2, text=True),
+        config=omendb_vector.CollectionConfig(dim=2, text=True),
     )
     for item in CORPUS:
         col.set(
@@ -481,7 +481,7 @@ class TestMutationExclusionOracle:
     def test_needs_compaction_after_deletions(self) -> None:
         """needs_compaction() returns True after enough deletions."""
         _skip_if_free_threaded()
-        from omendb import Collection, CollectionConfig
+        from omendb_vector import Collection, CollectionConfig
         col = Collection(":memory:", CollectionConfig(dim=128, metric="l2"))
         n = 10
         for i in range(n):
@@ -564,7 +564,7 @@ class TestFlushReopenEquivalenceOracle:
         col.flush()
 
         # Reopen
-        db2 = omendb.open(db_path, create=False)
+        db2 = omendb_vector.open(db_path, create=False)
         col2 = db2.collection("persist", create=False)
         results_after = col2.search_vector(QUERY_VECTOR, k=5)
 
@@ -582,7 +582,7 @@ class TestFlushReopenEquivalenceOracle:
         results_before = col.search_text("cat", k=5)
         col.flush()
 
-        db2 = omendb.open(db_path, create=False)
+        db2 = omendb_vector.open(db_path, create=False)
         col2 = db2.collection("persist", create=False)
         results_after = col2.search_text("cat", k=5)
 
@@ -604,7 +604,7 @@ class TestFlushReopenEquivalenceOracle:
         )
         col.flush()
 
-        db2 = omendb.open(db_path, create=False)
+        db2 = omendb_vector.open(db_path, create=False)
         col2 = db2.collection("persist", create=False)
         results_after = col2.search_vector(
             QUERY_VECTOR,
@@ -626,7 +626,7 @@ class TestFlushReopenEquivalenceOracle:
         record_before = col.get("doc1", include_text=True)
         col.flush()
 
-        db2 = omendb.open(db_path, create=False)
+        db2 = omendb_vector.open(db_path, create=False)
         col2 = db2.collection("persist", create=False)
         record_after = col2.get("doc1", include_text=True)
 
@@ -647,10 +647,10 @@ class TestCheckVacuumOracle:
         """check() should pass after inserts, updates, and deletes."""
         _skip_if_free_threaded()
         db_path = str(tmp_path / "db")
-        db = omendb.create(db_path)
+        db = omendb_vector.create(db_path)
         col = db.collection(
             "check_test",
-            config=omendb.CollectionConfig(dim=2, text=True),
+            config=omendb_vector.CollectionConfig(dim=2, text=True),
         )
 
         # Seed
@@ -729,10 +729,10 @@ class TestTextOnlyOracle:
     def test_text_only_excluded_from_vector_search(self) -> None:
         """Text-only items should not appear in vector search."""
         _skip_if_free_threaded()
-        db = omendb.memory()
+        db = omendb_vector.memory()
         col = db.collection(
             "text_only",
-            config=omendb.CollectionConfig(dim=2, text=True),
+            config=omendb_vector.CollectionConfig(dim=2, text=True),
         )
 
         # Add vector item
@@ -749,10 +749,10 @@ class TestTextOnlyOracle:
     def test_text_only_included_in_text_search(self) -> None:
         """Text-only items should appear in text search."""
         _skip_if_free_threaded()
-        db = omendb.memory()
+        db = omendb_vector.memory()
         col = db.collection(
             "text_only",
-            config=omendb.CollectionConfig(dim=2, text=True),
+            config=omendb_vector.CollectionConfig(dim=2, text=True),
         )
 
         col.set("vec1", vector=[1.0, 0.0], text="vector doc")
@@ -767,10 +767,10 @@ class TestTextOnlyOracle:
         """Text-only items persist across flush/reopen."""
         _skip_if_free_threaded()
         db_path = str(tmp_path / "db")
-        db = omendb.create(db_path)
+        db = omendb_vector.create(db_path)
         col = db.collection(
             "text_only",
-            config=omendb.CollectionConfig(dim=2, text=True),
+            config=omendb_vector.CollectionConfig(dim=2, text=True),
         )
 
         col.set("vec1", vector=[1.0, 0.0], text="vector doc")
@@ -778,7 +778,7 @@ class TestTextOnlyOracle:
 
         col.flush()
 
-        db2 = omendb.open(db_path, create=False)
+        db2 = omendb_vector.open(db_path, create=False)
         col2 = db2.collection("text_only", create=False)
 
         # Text-only item should still be searchable
@@ -805,13 +805,13 @@ class TestHNSWExactFallback:
     ) -> None:
         """HNSW must fall back to exact when allowlisted search returns
         fewer than k candidates."""
-        import omendb
+        import omendb_vector
 
         db_path = str(tmp_path / "hnsw_fallback.db")
-        db = omendb.open(db_path, create=True)
+        db = omendb_vector.open(db_path, create=True)
         col = db.collection(
             "test",
-            config=omendb.CollectionConfig(dim=2, index="hnsw"),
+            config=omendb_vector.CollectionConfig(dim=2, index="hnsw"),
         )
 
         # Insert 100 vectors in a line from 0 to 99
@@ -847,13 +847,13 @@ class TestHNSWExactFallback:
     ) -> None:
         """Metadata-filtered HNSW must fall back to exact when the
         eligible set is smaller than k."""
-        import omendb
+        import omendb_vector
 
         db_path = str(tmp_path / "hnsw_metadata_fallback.db")
-        db = omendb.open(db_path, create=True)
+        db = omendb_vector.open(db_path, create=True)
         col = db.collection(
             "test",
-            config=omendb.CollectionConfig(dim=2, index="hnsw"),
+            config=omendb_vector.CollectionConfig(dim=2, index="hnsw"),
         )
 
         for i in range(50):
@@ -885,13 +885,13 @@ class TestHNSWExactFallback:
     ) -> None:
         """Exact allowlist construction must not treat a partial metadata
         cache as the full live-id universe."""
-        import omendb
+        import omendb_vector
 
         db_path = str(tmp_path / "partial_cache.db")
-        db = omendb.open(db_path, create=True)
+        db = omendb_vector.open(db_path, create=True)
         col = db.collection(
             "test",
-            config=omendb.CollectionConfig(dim=2, index="hnsw"),
+            config=omendb_vector.CollectionConfig(dim=2, index="hnsw"),
         )
         col.set("a", vector=[0.0, 0.0], metadata={"kind": "match"})
         col.set("b", vector=[1.0, 0.0], metadata={"kind": "match"})
@@ -908,13 +908,13 @@ class TestHNSWExactFallback:
         self, tmp_path
     ) -> None:
         """Fallen-back exact scores must be geometrically correct."""
-        import omendb
+        import omendb_vector
 
         db_path = str(tmp_path / "hnsw_fallback_scores.db")
-        db = omendb.open(db_path, create=True)
+        db = omendb_vector.open(db_path, create=True)
         col = db.collection(
             "test",
-            config=omendb.CollectionConfig(dim=2, index="hnsw"),
+            config=omendb_vector.CollectionConfig(dim=2, index="hnsw"),
         )
 
         # Insert 3 vectors: (0,0), (3,0), (10,0)
@@ -953,13 +953,13 @@ class TestCrashRecovery:
 
     def test_flush_then_reopen_without_close(self, tmp_path) -> None:
         """Flush then reopen without clean close: all data must survive."""
-        import omendb
+        import omendb_vector
 
         db_path = str(tmp_path / "crash.db")
-        db = omendb.open(db_path, create=True)
+        db = omendb_vector.open(db_path, create=True)
         col = db.collection(
             "survivors",
-            config=omendb.CollectionConfig(dim=2, text=True),
+            config=omendb_vector.CollectionConfig(dim=2, text=True),
         )
 
         # Write records
@@ -975,7 +975,7 @@ class TestCrashRecovery:
         col.flush()
 
         # "Process restarts" — open fresh handle
-        db2 = omendb.open(db_path, create=False)
+        db2 = omendb_vector.open(db_path, create=False)
         col2 = db2.collection("survivors", create=False)
 
         # All 50 records present
@@ -1008,15 +1008,15 @@ class TestCrashRecovery:
 
     def test_multiple_flush_reopen_cycles(self, tmp_path) -> None:
         """Multiple flush-and-reopen cycles must not lose data."""
-        import omendb
+        import omendb_vector
 
         db_path = str(tmp_path / "cycles.db")
 
         for cycle in range(5):
-            db = omendb.open(db_path, create=(cycle == 0))
+            db = omendb_vector.open(db_path, create=(cycle == 0))
             col = db.collection(
                 "cycle",
-                config=omendb.CollectionConfig(dim=2),
+                config=omendb_vector.CollectionConfig(dim=2),
             )
             # Add 10 per cycle
             base = cycle * 10
@@ -1025,19 +1025,19 @@ class TestCrashRecovery:
             col.flush()
 
         # Final open: all 50 records must be present
-        db_final = omendb.open(db_path, create=False)
+        db_final = omendb_vector.open(db_path, create=False)
         col_final = db_final.collection("cycle", create=False)
         assert col_final._native_handle().len() == 50
 
     def test_vacuum_survives_crash(self, tmp_path) -> None:
         """Vacuum with atomic swap must survive mid-operation crash."""
-        import omendb
+        import omendb_vector
 
         db_path = str(tmp_path / "vacuum_crash.db")
-        db = omendb.open(db_path, create=True)
+        db = omendb_vector.open(db_path, create=True)
         col = db.collection(
             "volatile",
-            config=omendb.CollectionConfig(dim=2, text=True),
+            config=omendb_vector.CollectionConfig(dim=2, text=True),
         )
 
         # Add records, delete half
@@ -1060,7 +1060,7 @@ class TestCrashRecovery:
         assert stats.record_count == 20  # all tombstones removed
 
         # Simulate crash: reopen without closing
-        db2 = omendb.open(db_path, create=False)
+        db2 = omendb_vector.open(db_path, create=False)
         col2 = db2.collection("volatile", create=False)
 
         # Live records must survive
@@ -1081,14 +1081,14 @@ class TestCrashRecovery:
     def test_recovery_detects_backup_path(self, tmp_path) -> None:
         """_recover_collection_path must restore from backup when main
         path is missing but backup exists."""
-        import omendb
-        from omendb._api import _collection_backup_path
+        import omendb_vector
+        from omendb_vector._api import _collection_backup_path
 
         db_path = str(tmp_path / "recover.db")
-        db = omendb.open(db_path, create=True)
+        db = omendb_vector.open(db_path, create=True)
         col = db.collection(
             "backup",
-            config=omendb.CollectionConfig(dim=2),
+            config=omendb_vector.CollectionConfig(dim=2),
         )
         col.set("persist", vector=[1.0, 1.0])
         col.flush()
@@ -1102,7 +1102,7 @@ class TestCrashRecovery:
         assert backup_path.exists()
 
         # Reopen: recovery should restore from backup
-        db2 = omendb.open(db_path, create=False)
+        db2 = omendb_vector.open(db_path, create=False)
         col2 = db2.collection("backup", create=False)
 
         assert col2._native_handle().len() == 1
@@ -1120,13 +1120,13 @@ class TestCollectionOperations:
 
     def test_check_on_clean_collection(self, tmp_path) -> None:
         """check() on a clean collection returns zero issues."""
-        import omendb
+        import omendb_vector
 
         db_path = str(tmp_path / "check.db")
-        db = omendb.open(db_path, create=True)
+        db = omendb_vector.open(db_path, create=True)
         col = db.collection(
             "clean",
-            config=omendb.CollectionConfig(dim=2, text=True),
+            config=omendb_vector.CollectionConfig(dim=2, text=True),
         )
         col.set("a", vector=[1.0, 0.0], text="hello", metadata={"k": "v"})
         col.flush()
@@ -1137,14 +1137,14 @@ class TestCollectionOperations:
 
     def test_check_detects_missing_file(self, tmp_path) -> None:
         """check() must detect a missing required sidecar file."""
-        import omendb
+        import omendb_vector
         import os
 
         db_path = str(tmp_path / "broken.db")
-        db = omendb.open(db_path, create=True)
+        db = omendb_vector.open(db_path, create=True)
         col = db.collection(
             "broken",
-            config=omendb.CollectionConfig(dim=2),
+            config=omendb_vector.CollectionConfig(dim=2),
         )
         col.set("a", vector=[1.0, 0.0])
         col.flush()
@@ -1159,13 +1159,13 @@ class TestCollectionOperations:
 
     def test_rebuild_on_dirty_collection(self, tmp_path) -> None:
         """rebuild() must compact tombstones and preserve live state."""
-        import omendb
+        import omendb_vector
 
         db_path = str(tmp_path / "rebuild.db")
-        db = omendb.open(db_path, create=True)
+        db = omendb_vector.open(db_path, create=True)
         col = db.collection(
             "dirty",
-            config=omendb.CollectionConfig(dim=2),
+            config=omendb_vector.CollectionConfig(dim=2),
         )
         for i in range(20):
             col.set(f"rec_{i}", vector=[float(i), 0.0])
@@ -1179,13 +1179,13 @@ class TestCollectionOperations:
 
     def test_export_creates_standalone_directory(self, tmp_path) -> None:
         """export_to() produces a directory with manifest and sidecars."""
-        import omendb
+        import omendb_vector
 
         db_path = str(tmp_path / "source.db")
-        db = omendb.open(db_path, create=True)
+        db = omendb_vector.open(db_path, create=True)
         col = db.collection(
             "source",
-            config=omendb.CollectionConfig(dim=2, text=True),
+            config=omendb_vector.CollectionConfig(dim=2, text=True),
         )
         col.set("a", vector=[1.0, 0.0], text="hello world")
         col.flush()

@@ -9,7 +9,7 @@ import sys
 
 import pytest
 
-import omendb
+import omendb_vector
 
 
 def _skip_if_free_threaded() -> None:
@@ -19,10 +19,10 @@ def _skip_if_free_threaded() -> None:
 
 def _create_graph_collection(tmp_path, name="graph"):
     """Create a collection with graph enabled."""
-    db = omendb.create(str(tmp_path / "db"))
+    db = omendb_vector.create(str(tmp_path / "db"))
     col = db.collection(
         name,
-        config=omendb.CollectionConfig(
+        config=omendb_vector.CollectionConfig(
             dim=2,
             text=True,
             graph=True,
@@ -404,16 +404,16 @@ class TestGraphPersistence:
         """Graph relationships persist across flush/reopen."""
         _skip_if_free_threaded()
 
-        db = omendb.create(str(tmp_path / "db"))
+        db = omendb_vector.create(str(tmp_path / "db"))
         col = db.collection(
             "graph",
-            config=omendb.CollectionConfig(dim=2, text=True, graph=True),
+            config=omendb_vector.CollectionConfig(dim=2, text=True, graph=True),
         )
         _build_simple_graph(col)
         db.flush()
 
         # Reopen
-        db2 = omendb.open(str(tmp_path / "db"))
+        db2 = omendb_vector.open(str(tmp_path / "db"))
         col2 = db2.collection("graph")
 
         assert col2.has_path("A", "D") is True
@@ -424,16 +424,16 @@ class TestGraphPersistence:
         """Relationship types persist across flush/reopen."""
         _skip_if_free_threaded()
 
-        db = omendb.create(str(tmp_path / "db"))
+        db = omendb_vector.create(str(tmp_path / "db"))
         col = db.collection(
             "graph",
-            config=omendb.CollectionConfig(dim=2, text=True, graph=True),
+            config=omendb_vector.CollectionConfig(dim=2, text=True, graph=True),
         )
         _build_multi_type_graph(col)
         db.flush()
 
         # Reopen
-        db2 = omendb.open(str(tmp_path / "db"))
+        db2 = omendb_vector.open(str(tmp_path / "db"))
         col2 = db2.collection("graph")
 
         # Type filter should work after reopen
@@ -448,20 +448,20 @@ class TestGraphErrorHandling:
         """Graph operations require graph=True in config."""
         _skip_if_free_threaded()
 
-        db = omendb.create(str(tmp_path / "db"))
-        col = db.collection("nograph", config=omendb.CollectionConfig(dim=2))
+        db = omendb_vector.create(str(tmp_path / "db"))
+        col = db.collection("nograph", config=omendb_vector.CollectionConfig(dim=2))
         col.set("A", vector=[0.0, 0.0])
 
-        with pytest.raises(omendb.EngineUnavailableError, match="relationships"):
+        with pytest.raises(omendb_vector.EngineUnavailableError, match="relationships"):
             col.add_relationship("A", "B", type="links")
 
-        with pytest.raises(omendb.EngineUnavailableError, match="relationships"):
+        with pytest.raises(omendb_vector.EngineUnavailableError, match="relationships"):
             col.traverse("A")
 
-        with pytest.raises(omendb.EngineUnavailableError, match="relationships"):
+        with pytest.raises(omendb_vector.EngineUnavailableError, match="relationships"):
             col.has_path("A", "B")
 
-        with pytest.raises(omendb.EngineUnavailableError, match="relationships"):
+        with pytest.raises(omendb_vector.EngineUnavailableError, match="relationships"):
             col.shortest_path("A", "B")
 
     def test_invalid_direction(self, tmp_path) -> None:

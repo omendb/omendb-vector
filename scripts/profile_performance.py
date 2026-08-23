@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Performance profiling script for OmenDB.
+"""Performance profiling script for OmenDB Vector.
 
 Profiles performance on realistic datasets (100K+ vectors).
 """
@@ -11,7 +11,7 @@ import statistics
 import time
 from pathlib import Path
 
-import omendb
+import omendb_vector
 
 
 def generate_random_vector(dim: int) -> list[float]:
@@ -29,8 +29,8 @@ def profile_insert(db_path: str, num_items: int, dim: int) -> dict:
     print(f"Profiling insert: {num_items} items, dim={dim}")
     print(f"{'=' * 60}")
 
-    db = omendb.create(db_path)
-    col = db.collection("test", config=omendb.CollectionConfig(dim=dim))
+    db = omendb_vector.create(db_path)
+    col = db.collection("test", config=omendb_vector.CollectionConfig(dim=dim))
 
     # Generate vectors
     print("Generating vectors...")
@@ -63,8 +63,8 @@ def profile_search(db_path: str, num_queries: int, dim: int, k: int = 10) -> dic
     if Path(search_db_path).exists():
         shutil.rmtree(search_db_path)
 
-    db = omendb.create(search_db_path)
-    col = db.collection("test", config=omendb.CollectionConfig(dim=dim))
+    db = omendb_vector.create(search_db_path)
+    col = db.collection("test", config=omendb_vector.CollectionConfig(dim=dim))
 
     # Insert some items first
     print("Inserting items for search...")
@@ -118,7 +118,7 @@ def profile_flush(db_path: str) -> dict:
     print("Profiling flush")
     print(f"{'=' * 60}")
 
-    db = omendb.open(db_path)
+    db = omendb_vector.open(db_path)
 
     start = time.perf_counter()
     db.flush()
@@ -159,7 +159,7 @@ def main():
     """Run performance profiling."""
     import argparse
 
-    parser = argparse.ArgumentParser(description="OmenDB Performance Profiling")
+    parser = argparse.ArgumentParser(description="OmenDB Vector Performance Profiling")
     parser.add_argument(
         "--items", type=int, default=100000, help="Number of items to insert"
     )
@@ -168,7 +168,7 @@ def main():
     )
     parser.add_argument("--dim", type=int, default=2, help="Vector dimension")
     parser.add_argument(
-        "--db-path", default="/tmp/omendb_profile", help="Database path"
+        "--db-path", default="/tmp/omendb_vector_profile", help="Database path"
     )
     parser.add_argument(
         "--clean", action="store_true", help="Clean database before profiling"
@@ -181,7 +181,7 @@ def main():
         if Path(args.db_path).exists():
             shutil.rmtree(args.db_path)
 
-    print("OmenDB Performance Profiling")
+    print("OmenDB Vector Performance Profiling")
     print(f"Items: {args.items}, Queries: {args.queries}, Dim: {args.dim}")
     print(f"Database: {args.db_path}")
 

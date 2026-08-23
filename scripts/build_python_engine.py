@@ -5,7 +5,7 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
 ENGINE_SOURCE = ROOT / "src" / "python_engine.mojo"
-ENGINE_OUTPUT = ROOT / "src" / "omendb" / "_omendb_engine.so"
+ENGINE_OUTPUT = ROOT / "src" / "omendb_vector" / "_omendb_vector_engine.so"
 
 
 def main() -> None:

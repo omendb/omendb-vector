@@ -38,7 +38,7 @@ def test_segment_header_sizes() raises:
 
 def test_save_and_load_segment() raises:
     """Write a small segment and load it back with typed access."""
-    var test_path = "/tmp/omendb_mmap_test_segment.seg"
+    var test_path = "/tmp/omendb_vector_mmap_test_segment.seg"
     comptime dim = 4
     var n = 3
 
@@ -88,7 +88,7 @@ def test_save_and_load_segment() raises:
 
 def test_segment_larger_dataset() raises:
     """Segment works with 1000 vectors of dim 128."""
-    var test_path = "/tmp/omendb_mmap_test_large.seg"
+    var test_path = "/tmp/omendb_vector_mmap_test_large.seg"
     comptime dim = 128
     var n = 1000
 
@@ -124,7 +124,7 @@ def test_segment_missing_file() raises:
     """Opening a nonexistent file raises an explicit error."""
     var raised = False
     try:
-        _ = open_immutable_segment("/tmp/nonexistent_omendb_segment.seg")
+        _ = open_immutable_segment("/tmp/nonexistent_omendb_vector_segment.seg")
     except e:
         raised = True
         assert_true(String(e).find("not found") >= 0, "error: " + String(e))

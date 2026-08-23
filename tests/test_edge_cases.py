@@ -9,7 +9,7 @@ import sys
 
 import pytest
 
-import omendb
+import omendb_vector
 
 
 def _skip_if_free_threaded() -> None:
@@ -19,8 +19,8 @@ def _skip_if_free_threaded() -> None:
 
 def _create_collection(tmp_path, name="test", dim=2):
     """Create a test collection."""
-    db = omendb.create(str(tmp_path / "db"))
-    col = db.collection(name, config=omendb.CollectionConfig(dim=dim, text=True))
+    db = omendb_vector.create(str(tmp_path / "db"))
+    col = db.collection(name, config=omendb_vector.CollectionConfig(dim=dim, text=True))
     return db, col
 
 
@@ -63,7 +63,7 @@ class TestEmptyCollections:
         db.flush()
 
         # Reopen - empty collections may not be persisted
-        db2 = omendb.open(str(tmp_path / "db"))
+        db2 = omendb_vector.open(str(tmp_path / "db"))
         try:
             col2 = db2.collection("test")
             results = col2.search(vector=[1.0, 0.0], k=10)
@@ -125,10 +125,10 @@ class TestLargeVectors:
         _skip_if_free_threaded()
 
         # dim=8192 requires index='flat'
-        db = omendb.create(str(tmp_path / "db"))
+        db = omendb_vector.create(str(tmp_path / "db"))
         col = db.collection(
             "test",
-            config=omendb.CollectionConfig(dim=8192, index="flat", text=True),
+            config=omendb_vector.CollectionConfig(dim=8192, index="flat", text=True),
         )
 
         # Create a 8192-dim vector
@@ -200,7 +200,7 @@ class TestUnicodeHandling:
         col.set("日本語", vector=[1.0, 0.0], text="日本語テキスト")
         db.flush()
 
-        db2 = omendb.open(str(tmp_path / "db"))
+        db2 = omendb_vector.open(str(tmp_path / "db"))
         col2 = db2.collection("test")
 
         result = col2.get("日本語", include_text=True)
@@ -390,10 +390,10 @@ class TestRelationships:
         """Self-relationship raises error (not supported)."""
         _skip_if_free_threaded()
 
-        db = omendb.create(str(tmp_path / "db"))
+        db = omendb_vector.create(str(tmp_path / "db"))
         col = db.collection(
             "test",
-            config=omendb.CollectionConfig(dim=2, text=True, graph=True),
+            config=omendb_vector.CollectionConfig(dim=2, text=True, graph=True),
         )
 
         col.set("a", vector=[1.0, 0.0])
@@ -404,10 +404,10 @@ class TestRelationships:
         """Multiple relationship types work."""
         _skip_if_free_threaded()
 
-        db = omendb.create(str(tmp_path / "db"))
+        db = omendb_vector.create(str(tmp_path / "db"))
         col = db.collection(
             "test",
-            config=omendb.CollectionConfig(dim=2, text=True, graph=True),
+            config=omendb_vector.CollectionConfig(dim=2, text=True, graph=True),
         )
 
         col.set("a", vector=[1.0, 0.0])

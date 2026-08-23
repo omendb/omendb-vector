@@ -7,7 +7,7 @@ import time
 from dataclasses import dataclass
 from pathlib import Path
 
-import omendb
+import omendb_vector
 
 
 @dataclass(frozen=True, slots=True)
@@ -33,8 +33,8 @@ def run(root: Path, n: int) -> None:
 
     print("case,n,selectivity,correlated,matches,planner,top_id,elapsed_ms")
     for case in CASES:
-        db = omendb.create(root / case.name, exist_ok=True)
-        docs = db.collection("docs", config=omendb.CollectionConfig(dim=2))
+        db = omendb_vector.create(root / case.name, exist_ok=True)
+        docs = db.collection("docs", config=omendb_vector.CollectionConfig(dim=2))
         matches = max(1, int(n * case.selectivity))
         match_ids = set(_match_ids(n, matches, case.correlated, rng))
         for i in range(n):
@@ -72,7 +72,7 @@ def main() -> None:
         run(args.root, args.n)
         return
 
-    with tempfile.TemporaryDirectory(prefix="omendb-filter-selectivity-") as tmp:
+    with tempfile.TemporaryDirectory(prefix="omendb_vector-filter-selectivity-") as tmp:
         run(Path(tmp), args.n)
 
 

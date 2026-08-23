@@ -41,7 +41,7 @@ def sys_lseek(fd: c_int, offset: Int, whence: Int) -> Int:
 
 
 def main() raises:
-    var test_path = "/tmp/omendb_mmap_test.bin"
+    var test_path = "/tmp/omendb_vector_mmap_test.bin"
 
     var fd = sys_open(test_path.unsafe_ptr(), O_RDONLY)
     if fd < 0:

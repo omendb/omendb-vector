@@ -15,7 +15,7 @@ from std.python import Python
 
 def test_mmap_syscalls_basic() raises:
     """Open a file via syscall and mmap it."""
-    var path = "/tmp/omendb_mmap_syscalls_test.bin"
+    var path = "/tmp/omendb_vector_mmap_syscalls_test.bin"
 
     # Create test file with known content
     var data = List[UInt8]()
@@ -45,7 +45,7 @@ def test_mmap_syscalls_basic() raises:
 
 def test_mmap_with_python_coexistence() raises:
     """Verify mmap_syscalls works even when Python is imported."""
-    var path = "/tmp/omendb_mmap_syscalls_test2.bin"
+    var path = "/tmp/omendb_vector_mmap_syscalls_test2.bin"
 
     # Create test file
     var data = List[UInt8]()

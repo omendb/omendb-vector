@@ -58,13 +58,13 @@ jobs:
           locked: true
 
       - name: Build Mojo engine
-        run: pixi run mojo build src/python_engine.mojo --emit shared-lib -o src/omendb/_omendb_engine.so
+        run: pixi run mojo build src/python_engine.mojo --emit shared-lib -o src/omendb_vector/_omendb_vector_engine.so
 
       - name: Install package
         run: UV_NO_BUILD= pixi run uv pip install -e .
 
       - name: Ruff
-        run: pixi run ruff check --ignore E501 src/omendb scripts examples tests/test_python_api.py
+        run: pixi run ruff check --ignore E501 src/omendb_vector scripts examples tests/test_python_api.py
 
       - name: Python tests
         run: pixi run python -m pytest tests -q

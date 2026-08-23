@@ -230,7 +230,7 @@ struct VectorStore[dim: Int](Movable):
         _ = os.makedirs(parent, exist_ok=True)
         var basename = String(os.path.basename(path))
         var tmp_path = String(
-            tempfile.mkdtemp(prefix=".omendb-" + basename + "-", dir=parent)
+            tempfile.mkdtemp(prefix=".omendb_vector-" + basename + "-", dir=parent)
         )
         var backup_path = path + ".bak"
         try:

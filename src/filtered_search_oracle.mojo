@@ -1,5 +1,5 @@
 """
-Filtered-search correctness oracle for OmenDB-Mojo.
+Filtered-search correctness oracle for OmenDB Vector.
 
 Proves that filtered vector search has no recall loss vs exact brute-force
 across selectivity bands (broad / medium / restrictive).

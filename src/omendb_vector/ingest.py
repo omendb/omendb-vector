@@ -1,6 +1,6 @@
-"""Source-structure ingestion helper for OmenDB.
+"""Source-structure ingestion helper for OmenDB Vector.
 
-Provides narrow helpers to ingest files into OmenDB collections with proper
+Provides narrow helpers to ingest files into OmenDB Vector collections with proper
 source spans, section/page/symbol metadata, and optional parent/reference edges.
 
 This is a convenience layer over the core set() API, not an app-layer policy.
@@ -8,11 +8,11 @@ Users who need custom chunking, embedding, or metadata extraction should use
 the core API directly.
 
 Example:
-    import omendb
-    from omendb.ingest import ingest_file, ingest_directory
+    import omendb_vector
+    from omendb_vector.ingest import ingest_file, ingest_directory
 
-    db = omendb.create("./mydb")
-    col = db.collection("docs", config=omendb.CollectionConfig(dim=384, text=True))
+    db = omendb_vector.create("./mydb")
+    col = db.collection("docs", config=omendb_vector.CollectionConfig(dim=384, text=True))
 
     # Ingest a single file
     ingest_file(col, "README.md")

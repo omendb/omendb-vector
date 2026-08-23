@@ -1,4 +1,4 @@
-"""Stage 2 correctness harness: systematic oracle matrix for OmenDB-Mojo.
+"""Stage 2 correctness harness: systematic oracle matrix for OmenDB Vector.
 
 Proves database correctness across all core operations and index families.
 Every test uses a deterministic random corpus and compares engine results to
@@ -32,7 +32,7 @@ from typing import Any
 
 import pytest
 
-import omendb
+import omendb_vector
 
 # ---------------------------------------------------------------------------
 # Seed for deterministic randomness (different seeds test different patterns)
@@ -128,8 +128,8 @@ class _DbFixture:
         self.n_vectors = n_vectors
         self.tmpdir = tempfile.mkdtemp()
         db_path = Path(self.tmpdir) / "db"
-        self.db = omendb.open(str(db_path), create=True)
-        config = omendb.CollectionConfig(dim=dim, text=text)
+        self.db = omendb_vector.open(str(db_path), create=True)
+        config = omendb_vector.CollectionConfig(dim=dim, text=text)
         self.col = self.db.collection("test", config=config)
         self._records: dict[str, list[float]] = {}
         self._texts: dict[str, str] = {}
@@ -623,7 +623,7 @@ class TestFlushReopen:
             pre_ids = [r.id for r in fx.col.search_vector(fx.query_vector, k=5)]
             fx.col.flush()
 
-            db2 = omendb.open(str(Path(fx.tmpdir) / "db"), create=False)
+            db2 = omendb_vector.open(str(Path(fx.tmpdir) / "db"), create=False)
             col2 = db2.collection("test", create=False)
             post_ids = [r.id for r in col2.search_vector(fx.query_vector, k=5)]
 
@@ -640,7 +640,7 @@ class TestFlushReopen:
             pre_ids = [r.id for r in fx.col.search_text("database", k=5)]
             fx.col.flush()
 
-            db2 = omendb.open(str(Path(fx.tmpdir) / "db"), create=False)
+            db2 = omendb_vector.open(str(Path(fx.tmpdir) / "db"), create=False)
             col2 = db2.collection("test", create=False)
             post_ids = [r.id for r in col2.search_text("database", k=5)]
 
@@ -659,7 +659,7 @@ class TestFlushReopen:
             )]
             fx.col.flush()
 
-            db2 = omendb.open(str(Path(fx.tmpdir) / "db"), create=False)
+            db2 = omendb_vector.open(str(Path(fx.tmpdir) / "db"), create=False)
             col2 = db2.collection("test", create=False)
             post_ids = [r.id for r in col2.search_hybrid(
                 vector=fx.query_vector, text="database", k=5
@@ -681,7 +681,7 @@ class TestFlushReopen:
             pre_ids = [r.id for r in pre]
             fx.col.flush()
 
-            db2 = omendb.open(str(Path(fx.tmpdir) / "db"), create=False)
+            db2 = omendb_vector.open(str(Path(fx.tmpdir) / "db"), create=False)
             col2 = db2.collection("test", create=False)
             post = col2.search(
                 vector=fx.query_vector, k=5, filter={"category": "even"}
@@ -701,7 +701,7 @@ class TestFlushReopen:
             fx.col.delete("doc5")
             fx.col.flush()
 
-            db2 = omendb.open(str(Path(fx.tmpdir) / "db"), create=False)
+            db2 = omendb_vector.open(str(Path(fx.tmpdir) / "db"), create=False)
             col2 = db2.collection("test", create=False)
 
             results = col2.search_vector(fx.query_vector, k=30)
@@ -718,7 +718,7 @@ class TestFlushReopen:
             pre_count = len(fx.col.search_vector(fx.query_vector, k=500))
             fx.col.flush()
 
-            db2 = omendb.open(str(Path(fx.tmpdir) / "db"), create=False)
+            db2 = omendb_vector.open(str(Path(fx.tmpdir) / "db"), create=False)
             col2 = db2.collection("test", create=False)
             post_count = len(col2.search_vector(fx.query_vector, k=500))
 
@@ -768,7 +768,7 @@ class TestVacuumOracle:
             fx.col.vacuum()
             fx.col.flush()
 
-            db2 = omendb.open(str(Path(fx.tmpdir) / "db"), create=False)
+            db2 = omendb_vector.open(str(Path(fx.tmpdir) / "db"), create=False)
             col2 = db2.collection("test", create=False)
 
             pre_delete = [r.id for r in fx.col.search_vector(fx.query_vector, k=5)]
@@ -790,30 +790,30 @@ class TestResilience:
     """Prove the engine detects and handles bad state."""
 
     def test_reopen_with_wrong_dimension(self, tmp_path: Path) -> None:
-        db = omendb.open(str(tmp_path / "db"), create=True)
-        col = db.collection("test", config=omendb.CollectionConfig(dim=2, text=True))
+        db = omendb_vector.open(str(tmp_path / "db"), create=True)
+        col = db.collection("test", config=omendb_vector.CollectionConfig(dim=2, text=True))
         col.set("d1", vector=[1.0, 0.0])
         col.flush()
 
         # Reopen with wrong dimension
-        db2 = omendb.open(str(tmp_path / "db"), create=False)
+        db2 = omendb_vector.open(str(tmp_path / "db"), create=False)
         with pytest.raises(ValueError, match="dim|config"):
-            db2.collection("test", config=omendb.CollectionConfig(dim=128))
+            db2.collection("test", config=omendb_vector.CollectionConfig(dim=128))
 
     def test_open_collection_without_text_when_created_with_text(self, tmp_path: Path) -> None:
-        db = omendb.open(str(tmp_path / "db"), create=True)
-        col = db.collection("test", config=omendb.CollectionConfig(dim=2, text=True))
+        db = omendb_vector.open(str(tmp_path / "db"), create=True)
+        col = db.collection("test", config=omendb_vector.CollectionConfig(dim=2, text=True))
         col.set("d1", vector=[1.0, 0.0], text="hello")
         col.flush()
 
         # Reopen without text config
-        db2 = omendb.open(str(tmp_path / "db"), create=False)
+        db2 = omendb_vector.open(str(tmp_path / "db"), create=False)
         with pytest.raises(ValueError, match="text"):
-            db2.collection("test", config=omendb.CollectionConfig(dim=2, text=False))
+            db2.collection("test", config=omendb_vector.CollectionConfig(dim=2, text=False))
 
     def test_truncated_manifest_is_handled(self, tmp_path: Path) -> None:
-        db = omendb.open(str(tmp_path / "db"), create=True)
-        col = db.collection("test", config=omendb.CollectionConfig(dim=2, text=True))
+        db = omendb_vector.open(str(tmp_path / "db"), create=True)
+        col = db.collection("test", config=omendb_vector.CollectionConfig(dim=2, text=True))
         col.set("d1", vector=[1.0, 0.0])
         col.flush()
 
@@ -821,13 +821,13 @@ class TestResilience:
         manifest_path = tmp_path / "db" / "test" / "manifest.json"
         manifest_path.write_text("{", encoding="utf-8")  # Invalid JSON
 
-        db2 = omendb.open(str(tmp_path / "db"), create=False)
+        db2 = omendb_vector.open(str(tmp_path / "db"), create=False)
         with pytest.raises(Exception):
             db2.collection("test", create=False)
 
     def test_missing_sidecar_is_handled(self, tmp_path: Path) -> None:
-        db = omendb.open(str(tmp_path / "db"), create=True)
-        col = db.collection("test", config=omendb.CollectionConfig(dim=2))
+        db = omendb_vector.open(str(tmp_path / "db"), create=True)
+        col = db.collection("test", config=omendb_vector.CollectionConfig(dim=2))
         col.set("d1", vector=[1.0, 0.0])
         col.flush()
 
@@ -836,11 +836,11 @@ class TestResilience:
         if sidecar.exists():
             sidecar.unlink()
 
-        db2 = omendb.open(str(tmp_path / "db"), create=False)
+        db2 = omendb_vector.open(str(tmp_path / "db"), create=False)
         col2 = db2.collection("test", create=False)
         result = col2.check()
         # Check should produce a result object with diagnostics
-        assert isinstance(result, omendb.CheckResult), (
+        assert isinstance(result, omendb_vector.CheckResult), (
             f"Expected CheckResult, got {type(result)}"
         )
         # With missing sidecar, check should indicate issues
@@ -857,14 +857,14 @@ class TestCrashRecovery:
 
     def test_flush_then_reopen_preserves_all_data(self, tmp_path: Path) -> None:
         """After clean flush+reopen, all records and search results are preserved."""
-        db = omendb.open(str(tmp_path / "db"), create=True)
-        col = db.collection("test", config=omendb.CollectionConfig(dim=2, text=True))
+        db = omendb_vector.open(str(tmp_path / "db"), create=True)
+        col = db.collection("test", config=omendb_vector.CollectionConfig(dim=2, text=True))
         col.set("d1", vector=[1.0, 0.0], text="hello")
         col.set("d2", vector=[0.0, 1.0], text="world")
         col.set("d3", vector=[0.5, 0.5], text="hello world")
         col.flush()
 
-        db2 = omendb.open(str(tmp_path / "db"), create=False)
+        db2 = omendb_vector.open(str(tmp_path / "db"), create=False)
         col2 = db2.collection("test", create=False)
 
         # Record count preserved
@@ -884,14 +884,14 @@ class TestCrashRecovery:
 
     def test_multiple_flush_reopen_cycles(self, tmp_path: Path) -> None:
         """Multiple flush+reopen cycles must preserve data identically."""
-        db = omendb.open(str(tmp_path / "db"), create=True)
-        col = db.collection("test", config=omendb.CollectionConfig(dim=2, text=True))
+        db = omendb_vector.open(str(tmp_path / "db"), create=True)
+        col = db.collection("test", config=omendb_vector.CollectionConfig(dim=2, text=True))
 
         for cycle in range(3):
             col.set(f"c{cycle}", vector=[float(cycle), 0.0], text=f"cycle {cycle}")
             col.flush()
 
-            db = omendb.open(str(tmp_path / "db"), create=False)
+            db = omendb_vector.open(str(tmp_path / "db"), create=False)
             col = db.collection("test", create=False)
 
             # Verify all cycles' records present
@@ -904,14 +904,14 @@ class TestCrashRecovery:
 
     def test_flush_with_deletes_survives_reopen(self, tmp_path: Path) -> None:
         """Deleted records must not reappear after flush+reopen."""
-        db = omendb.open(str(tmp_path / "db"), create=True)
-        col = db.collection("test", config=omendb.CollectionConfig(dim=2))
+        db = omendb_vector.open(str(tmp_path / "db"), create=True)
+        col = db.collection("test", config=omendb_vector.CollectionConfig(dim=2))
         col.set("keep", vector=[1.0, 0.0])
         col.set("delete_me", vector=[0.0, 1.0])
         col.delete("delete_me")
         col.flush()
 
-        db2 = omendb.open(str(tmp_path / "db"), create=False)
+        db2 = omendb_vector.open(str(tmp_path / "db"), create=False)
         col2 = db2.collection("test", create=False)
 
         results = col2.search_vector([0.5, 0.5], k=5)
@@ -921,13 +921,13 @@ class TestCrashRecovery:
 
     def test_flush_with_updates_survives_reopen(self, tmp_path: Path) -> None:
         """Updated records must reflect changes after flush+reopen."""
-        db = omendb.open(str(tmp_path / "db"), create=True)
-        col = db.collection("test", config=omendb.CollectionConfig(dim=2, text=True))
+        db = omendb_vector.open(str(tmp_path / "db"), create=True)
+        col = db.collection("test", config=omendb_vector.CollectionConfig(dim=2, text=True))
         col.set("doc", vector=[1.0, 0.0], text="original")
         col.set("doc", vector=[0.0, 1.0], text="updated")
         col.flush()
 
-        db2 = omendb.open(str(tmp_path / "db"), create=False)
+        db2 = omendb_vector.open(str(tmp_path / "db"), create=False)
         col2 = db2.collection("test", create=False)
 
         # Record exists
@@ -942,8 +942,8 @@ class TestCrashRecovery:
 
     def test_vacuum_survives_reopen(self, tmp_path: Path) -> None:
         """Vacuumed state must persist across flush+reopen."""
-        db = omendb.open(str(tmp_path / "db"), create=True)
-        col = db.collection("test", config=omendb.CollectionConfig(dim=2))
+        db = omendb_vector.open(str(tmp_path / "db"), create=True)
+        col = db.collection("test", config=omendb_vector.CollectionConfig(dim=2))
         for i in range(10):
             col.set(f"doc{i}", vector=[float(i), 0.0])
         col.delete("doc3")
@@ -951,7 +951,7 @@ class TestCrashRecovery:
         col.vacuum()
         col.flush()
 
-        db2 = omendb.open(str(tmp_path / "db"), create=False)
+        db2 = omendb_vector.open(str(tmp_path / "db"), create=False)
         col2 = db2.collection("test", create=False)
 
         results = col2.search_vector([0.0, 0.0], k=10)
@@ -962,14 +962,14 @@ class TestCrashRecovery:
 
     def test_supersede_survives_reopen(self, tmp_path: Path) -> None:
         """Superseded records must stay superseded after flush+reopen."""
-        db = omendb.open(str(tmp_path / "db"), create=True)
-        col = db.collection("test", config=omendb.CollectionConfig(dim=2))
+        db = omendb_vector.open(str(tmp_path / "db"), create=True)
+        col = db.collection("test", config=omendb_vector.CollectionConfig(dim=2))
         col.set("old", vector=[1.0, 0.0])
         col.set("new", vector=[0.0, 1.0])
         col.supersede("old", "new")
         col.flush()
 
-        db2 = omendb.open(str(tmp_path / "db"), create=False)
+        db2 = omendb_vector.open(str(tmp_path / "db"), create=False)
         col2 = db2.collection("test", create=False)
 
         assert col2.get("old") is None
@@ -979,13 +979,13 @@ class TestCrashRecovery:
 
     def test_reopen_after_text_only_records(self, tmp_path: Path) -> None:
         """Text-only records (no vector) survive flush+reopen."""
-        db = omendb.open(str(tmp_path / "db"), create=True)
-        col = db.collection("test", config=omendb.CollectionConfig(dim=2, text=True))
+        db = omendb_vector.open(str(tmp_path / "db"), create=True)
+        col = db.collection("test", config=omendb_vector.CollectionConfig(dim=2, text=True))
         col.set("readme", text="This is the readme")
         col.set("guide", vector=[1.0, 0.0], text="This is the guide")
         col.flush()
 
-        db2 = omendb.open(str(tmp_path / "db"), create=False)
+        db2 = omendb_vector.open(str(tmp_path / "db"), create=False)
         col2 = db2.collection("test", create=False)
 
         # Text-only records searchable via text
@@ -1006,8 +1006,8 @@ class TestSourceEvidence:
     """Prove source evidence and relationship edges correctness."""
 
     def test_source_is_preserved_in_search(self, tmp_path: Path) -> None:
-        db = omendb.open(str(tmp_path / "db"), create=True)
-        col = db.collection("test", config=omendb.CollectionConfig(dim=2))
+        db = omendb_vector.open(str(tmp_path / "db"), create=True)
+        col = db.collection("test", config=omendb_vector.CollectionConfig(dim=2))
         col.set(
             "doc",
             vector=[1.0, 0.0],
@@ -1020,12 +1020,12 @@ class TestSourceEvidence:
         assert results[0].source.get("path") == "/data/file.txt"
 
     def test_source_survives_flush_and_reopen(self, tmp_path: Path) -> None:
-        db = omendb.open(str(tmp_path / "db"), create=True)
-        col = db.collection("test", config=omendb.CollectionConfig(dim=2))
+        db = omendb_vector.open(str(tmp_path / "db"), create=True)
+        col = db.collection("test", config=omendb_vector.CollectionConfig(dim=2))
         col.set("doc", vector=[1.0, 0.0], source={"path": "/test"})
         col.flush()
 
-        db2 = omendb.open(str(tmp_path / "db"), create=False)
+        db2 = omendb_vector.open(str(tmp_path / "db"), create=False)
         col2 = db2.collection("test", create=False)
 
         results = col2.search_vector([1.0, 0.0], k=1)
@@ -1033,8 +1033,8 @@ class TestSourceEvidence:
         assert results[0].source["path"] == "/test"
 
     def test_relationships_set_and_query(self, tmp_path: Path) -> None:
-        db = omendb.open(str(tmp_path / "db"), create=True)
-        col = db.collection("test", config=omendb.CollectionConfig(
+        db = omendb_vector.open(str(tmp_path / "db"), create=True)
+        col = db.collection("test", config=omendb_vector.CollectionConfig(
             dim=2, graph=True
         ))
         col.set("a", vector=[1.0, 0.0])
@@ -1048,8 +1048,8 @@ class TestSourceEvidence:
         assert evidence.type == "related"
 
     def test_relationships_persist_across_flush_reopen(self, tmp_path: Path) -> None:
-        db = omendb.open(str(tmp_path / "db"), create=True)
-        col = db.collection("test", config=omendb.CollectionConfig(
+        db = omendb_vector.open(str(tmp_path / "db"), create=True)
+        col = db.collection("test", config=omendb_vector.CollectionConfig(
             dim=2, graph=True
         ))
         col.set("a", vector=[1.0, 0.0])
@@ -1057,7 +1057,7 @@ class TestSourceEvidence:
         col.add_relationship("a", "b", type="related")
         col.flush()
 
-        db2 = omendb.open(str(tmp_path / "db"), create=False)
+        db2 = omendb_vector.open(str(tmp_path / "db"), create=False)
         col2 = db2.collection("test", create=False)
 
         # Verify records exist
@@ -1069,8 +1069,8 @@ class TestSourceEvidence:
         assert evidence.included is True
 
     def test_explain_shows_source_and_edges(self, tmp_path: Path) -> None:
-        db = omendb.open(str(tmp_path / "db"), create=True)
-        col = db.collection("test", config=omendb.CollectionConfig(dim=2))
+        db = omendb_vector.open(str(tmp_path / "db"), create=True)
+        col = db.collection("test", config=omendb_vector.CollectionConfig(dim=2))
         col.set("doc", vector=[1.0, 0.0], source={"path": "/test"})
         results = col.search_vector([1.0, 0.0], k=1, explain=True)
         assert results[0].source is not None
@@ -1087,22 +1087,22 @@ class TestEdgeCases:
     """Edge-case correctness verification."""
 
     def test_search_on_empty_collection(self, tmp_path: Path) -> None:
-        db = omendb.open(str(tmp_path / "db"), create=True)
-        col = db.collection("test", config=omendb.CollectionConfig(dim=2))
+        db = omendb_vector.open(str(tmp_path / "db"), create=True)
+        col = db.collection("test", config=omendb_vector.CollectionConfig(dim=2))
         results = col.search_vector([1.0, 0.0], k=5)
         assert results == []
 
     def test_k_larger_than_dataset(self, tmp_path: Path) -> None:
-        db = omendb.open(str(tmp_path / "db"), create=True)
-        col = db.collection("test", config=omendb.CollectionConfig(dim=2))
+        db = omendb_vector.open(str(tmp_path / "db"), create=True)
+        col = db.collection("test", config=omendb_vector.CollectionConfig(dim=2))
         col.set("d1", vector=[1.0, 0.0])
         col.set("d2", vector=[0.0, 1.0])
         results = col.search_vector([0.5, 0.5], k=10)
         assert len(results) == 2  # Only 2 records exist
 
     def test_search_with_identical_vectors(self, tmp_path: Path) -> None:
-        db = omendb.open(str(tmp_path / "db"), create=True)
-        col = db.collection("test", config=omendb.CollectionConfig(dim=2))
+        db = omendb_vector.open(str(tmp_path / "db"), create=True)
+        col = db.collection("test", config=omendb_vector.CollectionConfig(dim=2))
         col.set("d1", vector=[1.0, 0.0])
         col.set("d2", vector=[1.0, 0.0])  # Same vector
         results = col.search_vector([1.0, 0.0], k=2)
@@ -1110,16 +1110,16 @@ class TestEdgeCases:
         assert set(ids) == {"d1", "d2"}
 
     def test_text_search_no_common_terms(self, tmp_path: Path) -> None:
-        db = omendb.open(str(tmp_path / "db"), create=True)
-        col = db.collection("test", config=omendb.CollectionConfig(dim=2, text=True))
+        db = omendb_vector.open(str(tmp_path / "db"), create=True)
+        col = db.collection("test", config=omendb_vector.CollectionConfig(dim=2, text=True))
         col.set("d1", vector=[1.0, 0.0], text="alpha beta")
         col.set("d2", vector=[0.0, 1.0], text="gamma delta")
         results = col.search_text("epsilon", k=10)
         assert results == []
 
     def test_all_ids_excluded(self, tmp_path: Path) -> None:
-        db = omendb.open(str(tmp_path / "db"), create=True)
-        col = db.collection("test", config=omendb.CollectionConfig(dim=2))
+        db = omendb_vector.open(str(tmp_path / "db"), create=True)
+        col = db.collection("test", config=omendb_vector.CollectionConfig(dim=2))
         col.set("d1", vector=[1.0, 0.0])
         col.set("d2", vector=[0.0, 1.0])
         results = col.search_vector(
@@ -1128,8 +1128,8 @@ class TestEdgeCases:
         assert results == []
 
     def test_include_ids_with_no_matches_returns_empty(self, tmp_path: Path) -> None:
-        db = omendb.open(str(tmp_path / "db"), create=True)
-        col = db.collection("test", config=omendb.CollectionConfig(dim=2))
+        db = omendb_vector.open(str(tmp_path / "db"), create=True)
+        col = db.collection("test", config=omendb_vector.CollectionConfig(dim=2))
         col.set("d1", vector=[1.0, 0.0])
         results = col.search_vector(
             [0.5, 0.5], k=5, include_ids=["nonexistent"]

@@ -12,8 +12,8 @@ def engine_check() -> None:
 
 def store_check(argv: list[str] | None = None) -> None:
     parser = argparse.ArgumentParser(
-        prog="omendb-check",
-        description="Verify a persistent OmenDB store.",
+        prog="omendb-vector-check",
+        description="Verify a persistent OmenDB Vector store.",
     )
     parser.add_argument("path", help="database root path")
     args = parser.parse_args(argv)

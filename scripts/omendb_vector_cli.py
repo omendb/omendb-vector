@@ -1,12 +1,12 @@
 #!/usr/bin/env python3
-"""OmenDB CLI for backup, export, import, and maintenance operations.
+"""OmenDB Vector CLI for backup, export, import, and maintenance operations.
 
 Usage:
-    python omendb_cli.py snapshot <db_path> <snapshot_path>
-    python omendb_cli.py import <db_path> <snapshot_path> [--replace]
-    python omendb_cli.py check <db_path>
-    python omendb_cli.py vacuum <db_path> <collection_name>
-    python omendb_cli.py info <db_path>
+    python omendb_vector_cli.py snapshot <db_path> <snapshot_path>
+    python omendb_vector_cli.py import <db_path> <snapshot_path> [--replace]
+    python omendb_vector_cli.py check <db_path>
+    python omendb_vector_cli.py vacuum <db_path> <collection_name>
+    python omendb_vector_cli.py info <db_path>
 """
 
 from __future__ import annotations
@@ -14,13 +14,13 @@ from __future__ import annotations
 import argparse
 import sys
 
-import omendb
+import omendb_vector
 
 
 def cmd_snapshot(args: argparse.Namespace) -> int:
     """Create a snapshot of the database."""
     try:
-        db = omendb.open(args.db_path, create=False)
+        db = omendb_vector.open(args.db_path, create=False)
         db.snapshot(args.snapshot_path)
         print(f"Snapshot created: {args.snapshot_path}")
         return 0
@@ -32,7 +32,7 @@ def cmd_snapshot(args: argparse.Namespace) -> int:
 def cmd_import(args: argparse.Namespace) -> int:
     """Import a snapshot into the database."""
     try:
-        db = omendb.open(args.db_path, create=True)
+        db = omendb_vector.open(args.db_path, create=True)
         db.import_snapshot(args.snapshot_path, replace=args.replace)
         print(f"Snapshot imported: {args.snapshot_path}")
         return 0
@@ -44,7 +44,7 @@ def cmd_import(args: argparse.Namespace) -> int:
 def cmd_check(args: argparse.Namespace) -> int:
     """Check database integrity."""
     try:
-        db = omendb.open(args.db_path, create=False)
+        db = omendb_vector.open(args.db_path, create=False)
         result = db.check()
         if result.ok:
             print("Database integrity check passed")
@@ -62,7 +62,7 @@ def cmd_check(args: argparse.Namespace) -> int:
 def cmd_vacuum(args: argparse.Namespace) -> int:
     """Vacuum a collection to reclaim space."""
     try:
-        db = omendb.open(args.db_path, create=False)
+        db = omendb_vector.open(args.db_path, create=False)
         col = db.collection(args.collection_name, create=False)
         col.vacuum()
         print(f"Vacuumed collection: {args.collection_name}")
@@ -75,7 +75,7 @@ def cmd_vacuum(args: argparse.Namespace) -> int:
 def cmd_info(args: argparse.Namespace) -> int:
     """Show database information."""
     try:
-        db = omendb.open(args.db_path, create=False)
+        db = omendb_vector.open(args.db_path, create=False)
         print(f"Database: {args.db_path}")
         # Note: Collection listing not yet exposed; this is a placeholder
         print("Use Python API for detailed collection inspection")
@@ -87,7 +87,7 @@ def cmd_info(args: argparse.Namespace) -> int:
 
 def main() -> int:
     parser = argparse.ArgumentParser(
-        description="OmenDB CLI for backup, export, import, and maintenance"
+        description="OmenDB Vector CLI for backup, export, import, and maintenance"
     )
     subparsers = parser.add_subparsers(dest="command", required=True)
 

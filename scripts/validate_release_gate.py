@@ -94,13 +94,13 @@ def main() -> None:
         manifest["commands"].append(command)
         run(command, log_path=artifact_dir / "validate_p2_storage.log")
 
-    # Run release smoke test in a venv with omendb installed
+    # Run release smoke test in a venv with omendb_vector installed
     wheels = sorted(
-        (ROOT / "dist").glob("omendb-*.whl"),
+        (ROOT / "dist").glob("omendb_vector-*.whl"),
         key=lambda p: p.stat().st_mtime,
     )
     if wheels:
-        with tempfile.TemporaryDirectory(prefix="omendb-release-smoke-") as tmp:
+        with tempfile.TemporaryDirectory(prefix="omendb_vector-release-smoke-") as tmp:
             venv = Path(tmp) / "venv"
             run(["uv", "venv", "--python", sys.executable, str(venv)])
             python = venv / "bin" / "python"

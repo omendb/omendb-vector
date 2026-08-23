@@ -3,7 +3,7 @@ from std.ffi import CStringSlice
 from std.memory import OptionalUnsafePointer, alloc
 
 
-struct OmenDBResults(Movable):
+struct OmenDBVectorResults(Movable):
     var ids: List[String]
     var distances: List[Float32]
     var metadata: List[String]
@@ -81,10 +81,10 @@ def _store_48_from_handle(
 
 def _results_from_handle(
     handle: Int64,
-) raises -> UnsafePointer[OmenDBResults, MutExternalOrigin]:
+) raises -> UnsafePointer[OmenDBVectorResults, MutExternalOrigin]:
     if handle == 0:
         raise Error("null multivector results handle")
-    return UnsafePointer[OmenDBResults, MutExternalOrigin](
+    return UnsafePointer[OmenDBVectorResults, MutExternalOrigin](
         unsafe_from_address=Int(handle)
     )
 
@@ -118,8 +118,8 @@ def _alloc_store_48(
 def _alloc_results(
     var results: List[MultiVectorResult],
 ) -> Int64:
-    var ptr = alloc[OmenDBResults](1)
-    ptr.init_pointee_move(OmenDBResults(results^))
+    var ptr = alloc[OmenDBVectorResults](1)
+    ptr.init_pointee_move(OmenDBVectorResults(results^))
     return Int64(UnsafePointer(to=ptr).bitcast[Int]()[])
 
 
@@ -131,8 +131,8 @@ def _alloc_vector_buffer(
     return Int64(UnsafePointer(to=ptr).bitcast[Int]()[])
 
 
-@export("omendb_mv2_create", ABI="C")
-def omendb_mv2_create(
+@export("omendb_vector_mv2_create", ABI="C")
+def omendb_vector_mv2_create(
     path: CStringSlice[ImmutAnyOrigin],
 ) -> Int64:
     try:
@@ -141,8 +141,8 @@ def omendb_mv2_create(
         return 0
 
 
-@export("omendb_mv2_open", ABI="C")
-def omendb_mv2_open(
+@export("omendb_vector_mv2_open", ABI="C")
+def omendb_vector_mv2_open(
     path: CStringSlice[ImmutAnyOrigin],
 ) -> Int64:
     try:
@@ -151,8 +151,8 @@ def omendb_mv2_open(
         return 0
 
 
-@export("omendb_mv48_create", ABI="C")
-def omendb_mv48_create(
+@export("omendb_vector_mv48_create", ABI="C")
+def omendb_vector_mv48_create(
     path: CStringSlice[ImmutAnyOrigin],
 ) -> Int64:
     try:
@@ -161,8 +161,8 @@ def omendb_mv48_create(
         return 0
 
 
-@export("omendb_mv48_open", ABI="C")
-def omendb_mv48_open(
+@export("omendb_vector_mv48_open", ABI="C")
+def omendb_vector_mv48_open(
     path: CStringSlice[ImmutAnyOrigin],
 ) -> Int64:
     try:
@@ -171,8 +171,8 @@ def omendb_mv48_open(
         return 0
 
 
-@export("omendb_mv2_free", ABI="C")
-def omendb_mv2_free(handle: Int64):
+@export("omendb_vector_mv2_free", ABI="C")
+def omendb_vector_mv2_free(handle: Int64):
     if handle != 0:
         try:
             var ptr = _store_2_from_handle(handle)
@@ -182,8 +182,8 @@ def omendb_mv2_free(handle: Int64):
             pass
 
 
-@export("omendb_mv48_free", ABI="C")
-def omendb_mv48_free(handle: Int64):
+@export("omendb_vector_mv48_free", ABI="C")
+def omendb_vector_mv48_free(handle: Int64):
     if handle != 0:
         try:
             var ptr = _store_48_from_handle(handle)
@@ -193,24 +193,24 @@ def omendb_mv48_free(handle: Int64):
             pass
 
 
-@export("omendb_mv2_len", ABI="C")
-def omendb_mv2_len(handle: Int64) -> Int64:
+@export("omendb_vector_mv2_len", ABI="C")
+def omendb_vector_mv2_len(handle: Int64) -> Int64:
     try:
         return Int64(_store_2_from_handle(handle)[].len())
     except:
         return -1
 
 
-@export("omendb_mv48_len", ABI="C")
-def omendb_mv48_len(handle: Int64) -> Int64:
+@export("omendb_vector_mv48_len", ABI="C")
+def omendb_vector_mv48_len(handle: Int64) -> Int64:
     try:
         return Int64(_store_48_from_handle(handle)[].len())
     except:
         return -1
 
 
-@export("omendb_mv2_flush", ABI="C")
-def omendb_mv2_flush(handle: Int64) -> Int32:
+@export("omendb_vector_mv2_flush", ABI="C")
+def omendb_vector_mv2_flush(handle: Int64) -> Int32:
     try:
         _store_2_from_handle(handle)[].flush()
         return 0
@@ -218,8 +218,8 @@ def omendb_mv2_flush(handle: Int64) -> Int32:
         return -1
 
 
-@export("omendb_mv48_flush", ABI="C")
-def omendb_mv48_flush(handle: Int64) -> Int32:
+@export("omendb_vector_mv48_flush", ABI="C")
+def omendb_vector_mv48_flush(handle: Int64) -> Int32:
     try:
         _store_48_from_handle(handle)[].flush()
         return 0
@@ -227,8 +227,8 @@ def omendb_mv48_flush(handle: Int64) -> Int32:
         return -1
 
 
-@export("omendb_mv2_delete", ABI="C")
-def omendb_mv2_delete(
+@export("omendb_vector_mv2_delete", ABI="C")
+def omendb_vector_mv2_delete(
     handle: Int64,
     id: CStringSlice[ImmutAnyOrigin],
 ) -> Int32:
@@ -240,8 +240,8 @@ def omendb_mv2_delete(
         return -1
 
 
-@export("omendb_mv48_delete", ABI="C")
-def omendb_mv48_delete(
+@export("omendb_vector_mv48_delete", ABI="C")
+def omendb_vector_mv48_delete(
     handle: Int64,
     id: CStringSlice[ImmutAnyOrigin],
 ) -> Int32:
@@ -253,8 +253,8 @@ def omendb_mv48_delete(
         return -1
 
 
-@export("omendb_mv2_set_vectors_text", ABI="C")
-def omendb_mv2_set_vectors_text(
+@export("omendb_vector_mv2_set_vectors_text", ABI="C")
+def omendb_vector_mv2_set_vectors_text(
     handle: Int64,
     id: CStringSlice[ImmutAnyOrigin],
     vectors: UnsafePointer[Float32, ImmutAnyOrigin],
@@ -277,8 +277,8 @@ def omendb_mv2_set_vectors_text(
         return -1
 
 
-@export("omendb_mv48_set_vectors_text", ABI="C")
-def omendb_mv48_set_vectors_text(
+@export("omendb_vector_mv48_set_vectors_text", ABI="C")
+def omendb_vector_mv48_set_vectors_text(
     handle: Int64,
     id: CStringSlice[ImmutAnyOrigin],
     vectors: UnsafePointer[Float32, ImmutAnyOrigin],
@@ -301,8 +301,8 @@ def omendb_mv48_set_vectors_text(
         return -1
 
 
-@export("omendb_mv2_search_vectors", ABI="C")
-def omendb_mv2_search_vectors(
+@export("omendb_vector_mv2_search_vectors", ABI="C")
+def omendb_vector_mv2_search_vectors(
     handle: Int64,
     vectors: UnsafePointer[Float32, ImmutAnyOrigin],
     vector_count: Int64,
@@ -322,8 +322,8 @@ def omendb_mv2_search_vectors(
         return 0
 
 
-@export("omendb_mv48_search_vectors", ABI="C")
-def omendb_mv48_search_vectors(
+@export("omendb_vector_mv48_search_vectors", ABI="C")
+def omendb_vector_mv48_search_vectors(
     handle: Int64,
     vectors: UnsafePointer[Float32, ImmutAnyOrigin],
     vector_count: Int64,
@@ -343,8 +343,8 @@ def omendb_mv48_search_vectors(
         return 0
 
 
-@export("omendb_mv2_search_hybrid_vectors", ABI="C")
-def omendb_mv2_search_hybrid_vectors(
+@export("omendb_vector_mv2_search_hybrid_vectors", ABI="C")
+def omendb_vector_mv2_search_hybrid_vectors(
     handle: Int64,
     text: CStringSlice[ImmutAnyOrigin],
     vectors: UnsafePointer[Float32, ImmutAnyOrigin],
@@ -368,8 +368,8 @@ def omendb_mv2_search_hybrid_vectors(
         return 0
 
 
-@export("omendb_mv48_search_hybrid_vectors", ABI="C")
-def omendb_mv48_search_hybrid_vectors(
+@export("omendb_vector_mv48_search_hybrid_vectors", ABI="C")
+def omendb_vector_mv48_search_hybrid_vectors(
     handle: Int64,
     text: CStringSlice[ImmutAnyOrigin],
     vectors: UnsafePointer[Float32, ImmutAnyOrigin],
@@ -393,8 +393,8 @@ def omendb_mv48_search_hybrid_vectors(
         return 0
 
 
-@export("omendb_mv2_get_vectors", ABI="C")
-def omendb_mv2_get_vectors(
+@export("omendb_vector_mv2_get_vectors", ABI="C")
+def omendb_vector_mv2_get_vectors(
     handle: Int64,
     id: CStringSlice[ImmutAnyOrigin],
 ) -> Int64:
@@ -415,8 +415,8 @@ def omendb_mv2_get_vectors(
         return 0
 
 
-@export("omendb_mv48_get_vectors", ABI="C")
-def omendb_mv48_get_vectors(
+@export("omendb_vector_mv48_get_vectors", ABI="C")
+def omendb_vector_mv48_get_vectors(
     handle: Int64,
     id: CStringSlice[ImmutAnyOrigin],
 ) -> Int64:
@@ -437,8 +437,8 @@ def omendb_mv48_get_vectors(
         return 0
 
 
-@export("omendb_mv_results_free", ABI="C")
-def omendb_mv_results_free(results: Int64):
+@export("omendb_vector_mv_results_free", ABI="C")
+def omendb_vector_mv_results_free(results: Int64):
     if results != 0:
         try:
             var ptr = _results_from_handle(results)
@@ -448,16 +448,16 @@ def omendb_mv_results_free(results: Int64):
             pass
 
 
-@export("omendb_mv_results_len", ABI="C")
-def omendb_mv_results_len(results: Int64) -> Int64:
+@export("omendb_vector_mv_results_len", ABI="C")
+def omendb_vector_mv_results_len(results: Int64) -> Int64:
     try:
         return Int64(len(_results_from_handle(results)[].ids))
     except:
         return -1
 
 
-@export("omendb_mv_result_distance", ABI="C")
-def omendb_mv_result_distance(results: Int64, index: Int64) -> Float32:
+@export("omendb_vector_mv_result_distance", ABI="C")
+def omendb_vector_mv_result_distance(results: Int64, index: Int64) -> Float32:
     try:
         var ptr = _results_from_handle(results)
         if index < 0 or index >= Int64(len(ptr[].distances)):
@@ -467,8 +467,8 @@ def omendb_mv_result_distance(results: Int64, index: Int64) -> Float32:
         return 0.0
 
 
-@export("omendb_mv_result_id_copy", ABI="C")
-def omendb_mv_result_id_copy(
+@export("omendb_vector_mv_result_id_copy", ABI="C")
+def omendb_vector_mv_result_id_copy(
     results: Int64,
     index: Int64,
     dest: OptionalUnsafePointer[UInt8, MutAnyOrigin],
@@ -483,8 +483,8 @@ def omendb_mv_result_id_copy(
         return -1
 
 
-@export("omendb_mv_result_metadata_copy", ABI="C")
-def omendb_mv_result_metadata_copy(
+@export("omendb_vector_mv_result_metadata_copy", ABI="C")
+def omendb_vector_mv_result_metadata_copy(
     results: Int64,
     index: Int64,
     dest: OptionalUnsafePointer[UInt8, MutAnyOrigin],
@@ -499,8 +499,8 @@ def omendb_mv_result_metadata_copy(
         return -1
 
 
-@export("omendb_mv_vectors_free", ABI="C")
-def omendb_mv_vectors_free(vectors: Int64):
+@export("omendb_vector_mv_vectors_free", ABI="C")
+def omendb_vector_mv_vectors_free(vectors: Int64):
     if vectors != 0:
         try:
             var ptr = _vectors_from_handle(vectors)
@@ -510,24 +510,24 @@ def omendb_mv_vectors_free(vectors: Int64):
             pass
 
 
-@export("omendb_mv_vectors_count", ABI="C")
-def omendb_mv_vectors_count(vectors: Int64) -> Int64:
+@export("omendb_vector_mv_vectors_count", ABI="C")
+def omendb_vector_mv_vectors_count(vectors: Int64) -> Int64:
     try:
         return Int64(_vectors_from_handle(vectors)[].vector_count)
     except:
         return -1
 
 
-@export("omendb_mv_vectors_float_len", ABI="C")
-def omendb_mv_vectors_float_len(vectors: Int64) -> Int64:
+@export("omendb_vector_mv_vectors_float_len", ABI="C")
+def omendb_vector_mv_vectors_float_len(vectors: Int64) -> Int64:
     try:
         return Int64(len(_vectors_from_handle(vectors)[].vectors))
     except:
         return -1
 
 
-@export("omendb_mv_vectors_copy", ABI="C")
-def omendb_mv_vectors_copy(
+@export("omendb_vector_mv_vectors_copy", ABI="C")
+def omendb_vector_mv_vectors_copy(
     vectors: Int64,
     dest: OptionalUnsafePointer[Float32, MutAnyOrigin],
     capacity: Int64,
@@ -548,8 +548,8 @@ def omendb_mv_vectors_copy(
         return -1
 
 
-@export("omendb_mv_vectors_metadata_copy", ABI="C")
-def omendb_mv_vectors_metadata_copy(
+@export("omendb_vector_mv_vectors_metadata_copy", ABI="C")
+def omendb_vector_mv_vectors_metadata_copy(
     vectors: Int64,
     dest: OptionalUnsafePointer[UInt8, MutAnyOrigin],
     capacity: Int64,

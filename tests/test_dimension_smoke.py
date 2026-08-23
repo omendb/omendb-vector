@@ -6,7 +6,7 @@ These tests verify that the new HNSW bindings for common dimensions
 
 import pytest
 
-import omendb
+import omendb_vector
 
 # Test dimensions to verify
 TEST_DIMS = [256, 512, 768, 1024, 1536, 3072]
@@ -15,7 +15,7 @@ TEST_DIMS = [256, 512, 768, 1024, 1536, 3072]
 @pytest.fixture
 def tmp_db(tmp_path):
     """Create a temporary database for testing."""
-    return omendb.create(tmp_path / "test_db")
+    return omendb_vector.create(tmp_path / "test_db")
 
 
 class TestDenseDimensionSmoke:
@@ -24,8 +24,8 @@ class TestDenseDimensionSmoke:
     @pytest.mark.parametrize("dim", TEST_DIMS)
     def test_memory_collection(self, dim):
         """Test creating an in-memory collection with the dimension."""
-        db = omendb.memory()
-        config = omendb.CollectionConfig(dim=dim, index="hnsw")
+        db = omendb_vector.memory()
+        config = omendb_vector.CollectionConfig(dim=dim, index="hnsw")
         collection = db.collection(f"test_{dim}", config=config)
 
         # Create a simple vector
@@ -43,7 +43,7 @@ class TestDenseDimensionSmoke:
     @pytest.mark.parametrize("dim", TEST_DIMS)
     def test_persistent_collection(self, tmp_db, dim):
         """Test creating a persistent collection with the dimension."""
-        config = omendb.CollectionConfig(dim=dim, index="hnsw")
+        config = omendb_vector.CollectionConfig(dim=dim, index="hnsw")
         collection = tmp_db.collection(f"test_{dim}", config=config)
 
         # Create a simple vector
@@ -65,7 +65,7 @@ class TestDenseDimensionSmoke:
     @pytest.mark.parametrize("dim", TEST_DIMS)
     def test_search(self, tmp_db, dim):
         """Test vector search with the dimension."""
-        config = omendb.CollectionConfig(dim=dim, index="hnsw")
+        config = omendb_vector.CollectionConfig(dim=dim, index="hnsw")
         collection = tmp_db.collection(f"test_{dim}", config=config)
 
         # Add multiple items
@@ -83,7 +83,7 @@ class TestDenseDimensionSmoke:
     @pytest.mark.parametrize("dim", TEST_DIMS)
     def test_text_with_vectors(self, tmp_db, dim):
         """Test text indexing with vectors at the dimension."""
-        config = omendb.CollectionConfig(dim=dim, index="hnsw", text=True)
+        config = omendb_vector.CollectionConfig(dim=dim, index="hnsw", text=True)
         collection = tmp_db.collection(f"test_{dim}", config=config)
 
         vector = [0.1] * dim
@@ -102,7 +102,7 @@ class TestDenseDimensionSmoke:
     @pytest.mark.parametrize("dim", TEST_DIMS)
     def test_flat_index(self, tmp_db, dim):
         """Test flat (exact) index with the dimension."""
-        config = omendb.CollectionConfig(dim=dim, index="flat")
+        config = omendb_vector.CollectionConfig(dim=dim, index="flat")
         collection = tmp_db.collection(f"test_flat_{dim}", config=config)
 
         vector = [0.1] * dim
@@ -115,8 +115,8 @@ class TestDenseDimensionSmoke:
 
     def test_vector_mismatch_error(self):
         """Test that vector dimension mismatch raises clear error."""
-        db = omendb.memory()
-        config = omendb.CollectionConfig(dim=768, index="hnsw")
+        db = omendb_vector.memory()
+        config = omendb_vector.CollectionConfig(dim=768, index="hnsw")
         collection = db.collection("test", config=config)
 
         # Wrong dimension vector
@@ -128,7 +128,7 @@ class TestDenseDimensionSmoke:
     def test_unsupported_hnsw_dim_error(self):
         """Test that unsupported HNSW dims raise clear error."""
         with pytest.raises(ValueError, match="dim=257"):
-            omendb.CollectionConfig(dim=257, index="hnsw")
+            omendb_vector.CollectionConfig(dim=257, index="hnsw")
 
 
 if __name__ == "__main__":

@@ -11,7 +11,7 @@ import time
 
 import pytest
 
-import omendb
+import omendb_vector
 
 
 def _skip_if_free_threaded() -> None:
@@ -21,8 +21,8 @@ def _skip_if_free_threaded() -> None:
 
 def _create_collection(tmp_path, name="test"):
     """Create a test collection."""
-    db = omendb.create(str(tmp_path / "db"))
-    col = db.collection(name, config=omendb.CollectionConfig(dim=2, text=True))
+    db = omendb_vector.create(str(tmp_path / "db"))
+    col = db.collection(name, config=omendb_vector.CollectionConfig(dim=2, text=True))
     return db, col
 
 
@@ -151,8 +151,8 @@ class TestLockContention:
                 for i in range(10):
                     idx = start_idx + i
                     col.set(f"item_{idx}", vector=[float(idx), 0.0], text=f"Text {idx}")
-            except omendb.StoreBusyError:
-                errors.append(omendb.StoreBusyError("expected"))
+            except omendb_vector.StoreBusyError:
+                errors.append(omendb_vector.StoreBusyError("expected"))
             except Exception as e:
                 errors.append(e)
 
@@ -165,7 +165,7 @@ class TestLockContention:
 
         # Should have StoreBusyError (expected - collection has write lock)
         assert len(errors) > 0
-        assert all(isinstance(e, omendb.StoreBusyError) for e in errors)
+        assert all(isinstance(e, omendb_vector.StoreBusyError) for e in errors)
 
     def test_concurrent_sets_same_item_with_store_busy(self, tmp_path) -> None:
         """Concurrent sets to same item raise StoreBusyError (expected behavior)."""
@@ -178,8 +178,8 @@ class TestLockContention:
         def writer(value):
             try:
                 col.set("shared", vector=[float(value), 0.0], text=f"Value {value}")
-            except omendb.StoreBusyError:
-                errors.append(omendb.StoreBusyError("expected"))
+            except omendb_vector.StoreBusyError:
+                errors.append(omendb_vector.StoreBusyError("expected"))
             except Exception as e:
                 errors.append(e)
 
@@ -192,7 +192,7 @@ class TestLockContention:
 
         # Should have StoreBusyError (expected - collection has write lock)
         assert len(errors) > 0
-        assert all(isinstance(e, omendb.StoreBusyError) for e in errors)
+        assert all(isinstance(e, omendb_vector.StoreBusyError) for e in errors)
 
 
 class TestConcurrentFlush:
@@ -213,8 +213,8 @@ class TestConcurrentFlush:
                 for _ in range(5):
                     db.flush()
                     time.sleep(0.001)
-            except omendb.StoreBusyError:
-                errors.append(omendb.StoreBusyError("expected"))
+            except omendb_vector.StoreBusyError:
+                errors.append(omendb_vector.StoreBusyError("expected"))
             except Exception as e:
                 errors.append(e)
 
@@ -243,7 +243,7 @@ class TestConcurrentFlush:
         assert len(results) > 0
         # Flusher may have StoreBusyError (expected)
         for e in errors:
-            assert isinstance(e, omendb.StoreBusyError)
+            assert isinstance(e, omendb_vector.StoreBusyError)
 
 
 class TestConcurrentSearch:
@@ -369,7 +369,7 @@ class TestConcurrentPersistence:
                 db.flush()
                 db.close()
                 # Reopen
-                db2 = omendb.open(str(tmp_path / "db"))
+                db2 = omendb_vector.open(str(tmp_path / "db"))
                 col2 = db2.collection("test")
                 doc = col2.get("a", include_text=True)
                 assert doc is not None

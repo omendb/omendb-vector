@@ -23,17 +23,17 @@ class EngineUnavailableError(RuntimeError):
 def _load_engine():
     if "t" in sys.abiflags:
         raise EngineUnavailableError(
-            "OmenDB Mojo engine extension is built for the standard CPython ABI; "
+            "OmenDB Vector Mojo engine extension is built for the standard CPython ABI; "
             "free-threaded Python is not supported yet"
         )
     try:
-        return import_module("omendb._omendb_engine")
+        return import_module("omendb_vector._omendb_vector_engine")
     except ModuleNotFoundError as exc:
-        if exc.name == "omendb._omendb_engine":
+        if exc.name == "omendb_vector._omendb_vector_engine":
             raise EngineUnavailableError(
-                "OmenDB Mojo engine extension is not built; run "
+                "OmenDB Vector Mojo engine extension is not built; run "
                 "`pixi run mojo build src/python_engine.mojo "
-                "--emit shared-lib -o src/omendb/_omendb_engine.so`"
+                "--emit shared-lib -o src/omendb_vector/_omendb_vector_engine.so`"
             ) from exc
         raise
 
@@ -104,7 +104,7 @@ def multivector_collection(
         )
     if encoding not in ("none", "muvera"):
         raise EngineUnavailableError(
-            "OmenDB Mojo engine currently supports multi-vector "
+            "OmenDB Vector Mojo engine currently supports multi-vector "
             "encoding='none' or encoding='muvera'"
         )
     suffix = str(dim)

@@ -1,15 +1,15 @@
 [project]
-name = "omendb"
+name = "omendb-vector"
 version = "0.1.0a1"
 license = {text = "AGPL-3.0-only"}
 requires-python = ">=3.14"
 dependencies = []
-description = "OmenDB: embedded local database for hybrid vector + text search with source evidence"
+description = "OmenDB Vector: embedded local database for hybrid vector + text search with source evidence"
 readme = "README.md"
 
 [project.urls]
-Homepage = "https://github.com/omendb/omendb"
-Repository = "https://github.com/omendb/omendb"
+Homepage = "https://github.com/omendb/omendb-vector"
+Repository = "https://github.com/omendb/omendb-vector"
 
 [build-system]
 requires = ["hatchling"]
@@ -19,12 +19,12 @@ build-backend = "hatchling.build"
 path = "scripts/hatch_build.py"
 
 [tool.hatch.build.targets.wheel]
-packages = ["src/omendb"]
-artifacts = ["src/omendb/_omendb_engine.so"]
+packages = ["src/omendb_vector"]
+artifacts = ["src/omendb_vector/_omendb_vector_engine.so"]
 
 [project.scripts]
-omendb-check = "omendb._cli:store_check"
-omendb-engine-check = "omendb._cli:engine_check"
+omendb-vector-check = "omendb_vector._cli:store_check"
+omendb-vector-engine-check = "omendb_vector._cli:engine_check"
 
 [tool.ruff]
 line-length = 88

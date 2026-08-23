@@ -24,7 +24,7 @@ class CustomBuildHook(BuildHookInterface):
                 "--emit",
                 "shared-lib",
                 "-o",
-                str(root / "src" / "omendb" / "_omendb_engine.so"),
+                str(root / "src" / "omendb_vector" / "_omendb_vector_engine.so"),
             ],
             cwd=root,
             check=True,

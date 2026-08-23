@@ -28,9 +28,9 @@ from store import (
 
 
 @export
-def PyInit__omendb_engine() -> PythonObject:
+def PyInit__omendb_vector_engine() -> PythonObject:
     try:
-        var module = PythonModuleBuilder("_omendb_engine")
+        var module = PythonModuleBuilder("_omendb_vector_engine")
         module.def_function[engine_version](
             "engine_version",
             docstring="Return the packaged Mojo engine version.",
@@ -750,7 +750,7 @@ def PyInit__omendb_engine() -> PythonObject:
         )
         return module.finalize()
     except e:
-        abort(String("error creating OmenDB Mojo module: ", e))
+        abort(String("error creating OmenDB Vector module: ", e))
 
 
 def engine_version() raises -> PythonObject:

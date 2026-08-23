@@ -114,9 +114,9 @@ def extract_npy_from_npz(
 
 def prepare_local_sift100k(outdir: Path) -> None:
     root = repo_root()
-    omendb = root.parent / "omendb"
-    base_src = omendb / "benchmarks" / "data" / "sift-100k.f32bin"
-    npz_src = omendb / "benchmarks" / "data" / "sift-100k.npz"
+    vector_repo = root.parent / "omendb-vector"
+    base_src = vector_repo / "benchmarks" / "data" / "sift-100k.f32bin"
+    npz_src = vector_repo / "benchmarks" / "data" / "sift-100k.npz"
 
     for src in [base_src, npz_src]:
         if not src.exists():

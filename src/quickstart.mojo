@@ -1,5 +1,5 @@
 """
-OmenDB-Mojo Quickstart — end-to-end usage example.
+OmenDB Vector Quickstart — end-to-end usage example.
 
 Demonstrates:
   1. Creating an in-memory vector store
@@ -14,7 +14,7 @@ from store_types import Metric, HNSWParams
 
 
 def main() raises:
-    print("=== OmenDB-Mojo Quickstart ===\n")
+    print("=== OmenDB Vector Quickstart ===\n")
 
     # --- 1. Create an in-memory store ---
     var store = VectorStore[128]()
@@ -76,7 +76,7 @@ def main() raises:
         print("  " + r.id + "  distance=" + String(r.distance))
 
     # --- 5. Persistence ---
-    var path = "/tmp/omendb_quickstart_test"
+    var path = "/tmp/omendb_vector_quickstart_test"
     var persistent_store = VectorStore[128].create(path)
     var persist_ids = List[String]()
     persist_ids.append("doc:alpha")

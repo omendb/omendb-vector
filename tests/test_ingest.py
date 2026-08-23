@@ -1,4 +1,4 @@
-"""Tests for the omendb.ingest module.
+"""Tests for the omendb_vector.ingest module.
 
 Verifies file/directory ingestion with source spans, chunking, and metadata.
 """
@@ -9,8 +9,8 @@ import sys
 
 import pytest
 
-import omendb
-from omendb.ingest import ingest_directory, ingest_file, ingest_text
+import omendb_vector
+from omendb_vector.ingest import ingest_directory, ingest_file, ingest_text
 
 
 def _skip_if_free_threaded() -> None:
@@ -25,8 +25,8 @@ class TestIngestText:
         """Basic text ingestion works."""
         _skip_if_free_threaded()
 
-        db = omendb.create(str(tmp_path / "db"))
-        col = db.collection("test", config=omendb.CollectionConfig(dim=2, text=True))
+        db = omendb_vector.create(str(tmp_path / "db"))
+        col = db.collection("test", config=omendb_vector.CollectionConfig(dim=2, text=True))
 
         ingest_text(
             col,
@@ -54,8 +54,8 @@ class TestIngestFile:
         test_file = tmp_path / "test.txt"
         test_file.write_text("Hello, world!\nThis is a test.")
 
-        db = omendb.create(str(tmp_path / "db"))
-        col = db.collection("test", config=omendb.CollectionConfig(dim=2, text=True))
+        db = omendb_vector.create(str(tmp_path / "db"))
+        col = db.collection("test", config=omendb_vector.CollectionConfig(dim=2, text=True))
 
         ids = ingest_file(col, test_file)
         assert len(ids) == 1
@@ -75,8 +75,8 @@ class TestIngestFile:
         test_file = tmp_path / "test.txt"
         test_file.write_text("A" * 100 + "\n" + "B" * 100 + "\n" + "C" * 100)
 
-        db = omendb.create(str(tmp_path / "db"))
-        col = db.collection("test", config=omendb.CollectionConfig(dim=2, text=True))
+        db = omendb_vector.create(str(tmp_path / "db"))
+        col = db.collection("test", config=omendb_vector.CollectionConfig(dim=2, text=True))
 
         ids = ingest_file(col, test_file, chunk_size=150)
         assert len(ids) > 1
@@ -96,8 +96,8 @@ class TestIngestFile:
         test_file = tmp_path / "test.txt"
         test_file.write_text("A" * 100 + "\n" + "B" * 100)
 
-        db = omendb.create(str(tmp_path / "db"))
-        col = db.collection("test", config=omendb.CollectionConfig(dim=2, text=True))
+        db = omendb_vector.create(str(tmp_path / "db"))
+        col = db.collection("test", config=omendb_vector.CollectionConfig(dim=2, text=True))
 
         ids = ingest_file(col, test_file, chunk_size=80, chunk_overlap=20)
         assert len(ids) > 1
@@ -106,8 +106,8 @@ class TestIngestFile:
         """Ingesting non-existent file raises error."""
         _skip_if_free_threaded()
 
-        db = omendb.create(str(tmp_path / "db"))
-        col = db.collection("test", config=omendb.CollectionConfig(dim=2, text=True))
+        db = omendb_vector.create(str(tmp_path / "db"))
+        col = db.collection("test", config=omendb_vector.CollectionConfig(dim=2, text=True))
 
         with pytest.raises(FileNotFoundError):
             ingest_file(col, tmp_path / "nonexistent.txt")
@@ -120,8 +120,8 @@ class TestIngestFile:
         test_file = tmp_path / "empty.txt"
         test_file.write_text("")
 
-        db = omendb.create(str(tmp_path / "db"))
-        col = db.collection("test", config=omendb.CollectionConfig(dim=2, text=True))
+        db = omendb_vector.create(str(tmp_path / "db"))
+        col = db.collection("test", config=omendb_vector.CollectionConfig(dim=2, text=True))
 
         ids = ingest_file(col, test_file)
         assert len(ids) == 0
@@ -142,8 +142,8 @@ class TestIngestDirectory:
         sub_dir.mkdir()
         (sub_dir / "c.py").write_text("print('c')")
 
-        db = omendb.create(str(tmp_path / "db"))
-        col = db.collection("test", config=omendb.CollectionConfig(dim=2, text=True))
+        db = omendb_vector.create(str(tmp_path / "db"))
+        col = db.collection("test", config=omendb_vector.CollectionConfig(dim=2, text=True))
 
         ids = ingest_directory(col, tmp_dir, glob="*.py")
         assert len(ids) == 3
@@ -159,8 +159,8 @@ class TestIngestDirectory:
         sub_dir.mkdir()
         (sub_dir / "b.py").write_text("print('b')")
 
-        db = omendb.create(str(tmp_path / "db"))
-        col = db.collection("test", config=omendb.CollectionConfig(dim=2, text=True))
+        db = omendb_vector.create(str(tmp_path / "db"))
+        col = db.collection("test", config=omendb_vector.CollectionConfig(dim=2, text=True))
 
         ids = ingest_directory(col, tmp_dir, glob="*.py", recursive=False)
         assert len(ids) == 1
@@ -169,8 +169,8 @@ class TestIngestDirectory:
         """Ingesting non-existent directory raises error."""
         _skip_if_free_threaded()
 
-        db = omendb.create(str(tmp_path / "db"))
-        col = db.collection("test", config=omendb.CollectionConfig(dim=2, text=True))
+        db = omendb_vector.create(str(tmp_path / "db"))
+        col = db.collection("test", config=omendb_vector.CollectionConfig(dim=2, text=True))
 
         with pytest.raises(FileNotFoundError):
             ingest_directory(col, tmp_path / "nonexistent")
@@ -183,8 +183,8 @@ class TestIngestDirectory:
         test_file = tmp_path / "file.txt"
         test_file.write_text("hello")
 
-        db = omendb.create(str(tmp_path / "db"))
-        col = db.collection("test", config=omendb.CollectionConfig(dim=2, text=True))
+        db = omendb_vector.create(str(tmp_path / "db"))
+        col = db.collection("test", config=omendb_vector.CollectionConfig(dim=2, text=True))
 
         with pytest.raises(NotADirectoryError):
             ingest_directory(col, test_file)
@@ -197,8 +197,8 @@ class TestIngestDirectory:
         (tmp_dir := tmp_path / "src").mkdir()
         (tmp_dir / "a.py").write_text("print('a')")
 
-        db = omendb.create(str(tmp_path / "db"))
-        col = db.collection("test", config=omendb.CollectionConfig(dim=2, text=True))
+        db = omendb_vector.create(str(tmp_path / "db"))
+        col = db.collection("test", config=omendb_vector.CollectionConfig(dim=2, text=True))
 
         ids = ingest_directory(col, tmp_dir, glob="*.py", metadata={"project": "test"})
         assert len(ids) == 1
@@ -215,8 +215,8 @@ class TestIngestDirectory:
         (tmp_dir := tmp_path / "src").mkdir()
         (tmp_dir / "large.py").write_text("# " + "A" * 500 + "\n" + "# " + "B" * 500)
 
-        db = omendb.create(str(tmp_path / "db"))
-        col = db.collection("test", config=omendb.CollectionConfig(dim=2, text=True))
+        db = omendb_vector.create(str(tmp_path / "db"))
+        col = db.collection("test", config=omendb_vector.CollectionConfig(dim=2, text=True))
 
         ids = ingest_directory(col, tmp_dir, glob="*.py", chunk_size=300)
         assert len(ids) > 1

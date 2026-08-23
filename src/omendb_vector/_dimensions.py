@@ -1,4 +1,4 @@
-"""Central dimension registry for OmenDB vector collections.
+"""Central dimension registry for OmenDB Vector vector collections.
 
 This module is the single source of truth for supported dimensions,
 used by _native.py, validation, error messages, public capability APIs,
@@ -110,12 +110,12 @@ def dense_dim_error(dim: int, index: IndexMode = "hnsw") -> str:
         return f"dense dimension must be positive; got dim={dim}"
     if index == "hnsw":
         return (
-            f"OmenDB dense hnsw/l2 supports dim in {DENSE_OPTIMIZED_DIMS}; "
+            f"OmenDB Vector dense hnsw/l2 supports dim in {DENSE_OPTIMIZED_DIMS}; "
             f"got dim={dim}. Use index='flat' for exact dynamic search, or "
             f"choose a supported optimized HNSW dimension."
         )
     return (
-        f"OmenDB dense flat supports dim in 1..{DENSE_DYNAMIC_FLAT_MAX_DIM}; "
+        f"OmenDB Vector dense flat supports dim in 1..{DENSE_DYNAMIC_FLAT_MAX_DIM}; "
         f"got dim={dim}"
     )
 
@@ -124,11 +124,11 @@ def multivector_dim_error(dim: int, encoding: EncodingMode = "none") -> str:
     """Generate an error message for unsupported multivector dimensions."""
     if encoding == "muvera":
         return (
-            f"OmenDB multivector muvera supports dim in {MULTIVECTOR_MUVERA_DIMS}; "
+            f"OmenDB Vector multivector muvera supports dim in {MULTIVECTOR_MUVERA_DIMS}; "
             f"got dim={dim}"
         )
     return (
-        f"OmenDB multivector exact supports dim in {MULTIVECTOR_EXACT_DIMS}; "
+        f"OmenDB Vector multivector exact supports dim in {MULTIVECTOR_EXACT_DIMS}; "
         f"got dim={dim}"
     )
 

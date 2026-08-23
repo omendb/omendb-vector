@@ -13,7 +13,7 @@ ROOT = Path(__file__).resolve().parents[1]
 DEFAULT_PYTHON = "/opt/homebrew/bin/python3.14"
 type CommandRow = dict[str, object]
 RUFF_TARGETS = [
-    "src/omendb",
+    "src/omendb_vector",
     "tests/test_python_api.py",
     "benchmarks/real_data",
     "benchmarks/local_competitors",
@@ -21,7 +21,7 @@ RUFF_TARGETS = [
 ]
 TY_TARGETS = [
     "benchmarks/real_data",
-    "src/omendb",
+    "src/omendb_vector",
     "tests/test_python_api.py",
     "scripts",
 ]
@@ -44,7 +44,7 @@ def standard_python(configured: str | None) -> str:
         candidates.append(configured)
     candidates.extend(
         [
-            os.environ.get("OMENDB_STANDARD_PYTHON"),
+            os.environ.get("OMENDB_VECTOR_STANDARD_PYTHON"),
             DEFAULT_PYTHON,
             shutil.which("python3.14"),
             shutil.which("python3"),
@@ -127,16 +127,16 @@ def run_mojo_tests(artifact_dir: Path, commands: list[CommandRow]) -> None:
 
 def latest_wheel() -> Path:
     wheels = sorted(
-        (ROOT / "dist").glob("omendb-*.whl"), key=lambda path: path.stat().st_mtime
+        (ROOT / "dist").glob("omendb_vector-*.whl"), key=lambda path: path.stat().st_mtime
     )
     if not wheels:
-        raise RuntimeError("uv build did not produce an omendb wheel")
+        raise RuntimeError("uv build did not produce an omendb-vector wheel")
     return wheels[-1]
 
 
 def main() -> None:
     parser = argparse.ArgumentParser(
-        description="Validate the local embedded OmenDB DB surface."
+        description="Validate the local embedded OmenDB Vector DB surface."
     )
     parser.add_argument("--python", default=None, help="standard CPython 3.14 path")
     parser.add_argument("--artifact-dir", type=Path, default=None)

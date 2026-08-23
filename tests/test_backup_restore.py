@@ -16,7 +16,7 @@ from pathlib import Path
 
 import pytest
 
-import omendb
+import omendb_vector
 
 
 def _skip_if_free_threaded() -> None:
@@ -36,8 +36,8 @@ class TestBackupRestoreDense:
         restore_path = str(tmp_path / "restored")
 
         # Create database with dense vectors
-        db = omendb.create(db_path)
-        col = db.collection("dense", config=omendb.CollectionConfig(dim=2, text=True))
+        db = omendb_vector.create(db_path)
+        col = db.collection("dense", config=omendb_vector.CollectionConfig(dim=2, text=True))
         for i in range(10):
             col.set(
                 f"doc_{i}",
@@ -52,7 +52,7 @@ class TestBackupRestoreDense:
         db.snapshot(snapshot_path)
 
         # Restore to new location
-        db2 = omendb.create(restore_path)
+        db2 = omendb_vector.create(restore_path)
         db2.import_snapshot(snapshot_path)
 
         # Verify all data preserved
@@ -84,8 +84,8 @@ class TestBackupRestoreText:
         restore_path = str(tmp_path / "restored")
 
         # Create database with text data
-        db = omendb.create(db_path)
-        col = db.collection("text", config=omendb.CollectionConfig(dim=2, text=True))
+        db = omendb_vector.create(db_path)
+        col = db.collection("text", config=omendb_vector.CollectionConfig(dim=2, text=True))
         for i in range(10):
             col.set(
                 f"doc_{i}",
@@ -97,7 +97,7 @@ class TestBackupRestoreText:
 
         # Snapshot and restore
         db.snapshot(snapshot_path)
-        db2 = omendb.create(restore_path)
+        db2 = omendb_vector.create(restore_path)
         db2.import_snapshot(snapshot_path)
 
         # Verify text search works
@@ -123,8 +123,8 @@ class TestBackupRestoreSource:
         restore_path = str(tmp_path / "restored")
 
         # Create database with source spans
-        db = omendb.create(db_path)
-        col = db.collection("source", config=omendb.CollectionConfig(dim=2, text=True))
+        db = omendb_vector.create(db_path)
+        col = db.collection("source", config=omendb_vector.CollectionConfig(dim=2, text=True))
         for i in range(10):
             col.set(
                 f"doc_{i}",
@@ -136,7 +136,7 @@ class TestBackupRestoreSource:
 
         # Snapshot and restore
         db.snapshot(snapshot_path)
-        db2 = omendb.create(restore_path)
+        db2 = omendb_vector.create(restore_path)
         db2.import_snapshot(snapshot_path)
 
         # Verify source preserved
@@ -159,10 +159,10 @@ class TestBackupRestoreMultivector:
         restore_path = str(tmp_path / "restored")
 
         # Create database with multivector data
-        db = omendb.create(db_path)
+        db = omendb_vector.create(db_path)
         col = db.collection(
             "multi",
-            config=omendb.CollectionConfig(
+            config=omendb_vector.CollectionConfig(
                 dim=2,
                 text=True,
                 vector_mode="multi",
@@ -180,7 +180,7 @@ class TestBackupRestoreMultivector:
 
         # Snapshot and restore
         db.snapshot(snapshot_path)
-        db2 = omendb.create(restore_path)
+        db2 = omendb_vector.create(restore_path)
         db2.import_snapshot(snapshot_path)
 
         # Verify multivector search works
@@ -201,9 +201,9 @@ class TestBackupRestoreTextOnly:
         restore_path = str(tmp_path / "restored")
 
         # Create database with text-only items
-        db = omendb.create(db_path)
+        db = omendb_vector.create(db_path)
         col = db.collection(
-            "text_only", config=omendb.CollectionConfig(dim=2, text=True)
+            "text_only", config=omendb_vector.CollectionConfig(dim=2, text=True)
         )
         for i in range(10):
             col.set(
@@ -214,7 +214,7 @@ class TestBackupRestoreTextOnly:
 
         # Snapshot and restore
         db.snapshot(snapshot_path)
-        db2 = omendb.create(restore_path)
+        db2 = omendb_vector.create(restore_path)
         db2.import_snapshot(snapshot_path)
 
         # Verify text-only items preserved
@@ -243,11 +243,11 @@ class TestBackupRestoreMixed:
         restore_path = str(tmp_path / "restored")
 
         # Create database with mixed data types
-        db = omendb.create(db_path)
+        db = omendb_vector.create(db_path)
 
         # Dense collection
         dense_col = db.collection(
-            "dense", config=omendb.CollectionConfig(dim=2, text=True)
+            "dense", config=omendb_vector.CollectionConfig(dim=2, text=True)
         )
         for i in range(5):
             dense_col.set(
@@ -259,7 +259,7 @@ class TestBackupRestoreMixed:
 
         # Text-only collection
         text_col = db.collection(
-            "text_only", config=omendb.CollectionConfig(dim=2, text=True)
+            "text_only", config=omendb_vector.CollectionConfig(dim=2, text=True)
         )
         for i in range(5):
             text_col.set(
@@ -270,7 +270,7 @@ class TestBackupRestoreMixed:
         # Multivector collection
         multi_col = db.collection(
             "multi",
-            config=omendb.CollectionConfig(
+            config=omendb_vector.CollectionConfig(
                 dim=2,
                 text=True,
                 vector_mode="multi",
@@ -289,7 +289,7 @@ class TestBackupRestoreMixed:
 
         # Snapshot and restore
         db.snapshot(snapshot_path)
-        db2 = omendb.create(restore_path)
+        db2 = omendb_vector.create(restore_path)
         db2.import_snapshot(snapshot_path)
 
         # Verify all collections preserved
@@ -324,15 +324,15 @@ class TestCLIBackupRestore:
         snapshot_path = str(tmp_path / "snapshot")
 
         # Create database
-        db = omendb.create(db_path)
-        col = db.collection("test", config=omendb.CollectionConfig(dim=2, text=True))
+        db = omendb_vector.create(db_path)
+        col = db.collection("test", config=omendb_vector.CollectionConfig(dim=2, text=True))
         for i in range(5):
             col.set(
                 f"doc_{i}", vector=[float(i) / 5, 1.0 - float(i) / 5], text=f"Doc {i}"
             )
         col.flush()
 
-        # Test snapshot via Python API (CLI requires omendb installed)
+        # Test snapshot via Python API (CLI requires omendb_vector installed)
         db.snapshot(snapshot_path)
         assert Path(snapshot_path).exists()
 

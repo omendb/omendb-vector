@@ -5,7 +5,7 @@ engine (store.mojo search_hybrid) and wired through Collection.search(sparse=...
 """
 
 import pytest
-from omendb import Collection, CollectionConfig
+from omendb_vector import Collection, CollectionConfig
 
 
 def test_sparse_set_and_query():

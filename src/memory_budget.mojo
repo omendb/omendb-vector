@@ -1,5 +1,5 @@
 """
-Memory budget tracking for OmenDB-Mojo.
+Memory budget tracking for OmenDB Vector.
 
 Estimates memory usage of vector data, SQ8 codes, HNSW graph, and
 metadata structures. Enables production deployment with predictable

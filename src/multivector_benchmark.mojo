@@ -382,7 +382,7 @@ def main() raises:
     var muvera_M = 16
     var muvera_ef_construction = 100
 
-    print("OmenDB-Mojo multi-vector exact and MuVERA candidate baseline")
+    print("OmenDB Vector multi-vector exact and MuVERA candidate baseline")
     print(
         "BENCH_MV_META schema_version=1"
         + " benchmark=multivector_omengrep_shape"

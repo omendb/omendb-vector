@@ -6,7 +6,7 @@ import tempfile
 from pathlib import Path
 from typing import Any
 
-import omendb
+import omendb_vector
 
 DIM = 128
 
@@ -92,10 +92,10 @@ def run(root: Path) -> None:
     snapshot_path = root / "agent-memory-release-snapshot"
     imported_path = root / "agent-memory-release-imported"
 
-    db = omendb.create(db_path)
+    db = omendb_vector.create(db_path)
     memories = db.collection(
         "memories",
-        config=omendb.CollectionConfig(dim=DIM, text=True, graph=True),
+        config=omendb_vector.CollectionConfig(dim=DIM, text=True, graph=True),
     )
     memories.set_many(MEMORIES)
     memories.set(
@@ -155,7 +155,7 @@ def run(root: Path) -> None:
     ]
 
     db.close()
-    reopened = omendb.open(db_path, create=False).collection("memories", create=False)
+    reopened = omendb_vector.open(db_path, create=False).collection("memories", create=False)
     assert reopened.get("task:stale") is None
     assert reopened.search_text("temporary directories", k=1)[0].id == (
         "note:persistence"
@@ -168,10 +168,10 @@ def run(root: Path) -> None:
         "decision:no-auto",
     ]
 
-    omendb.open(db_path, create=False).snapshot(snapshot_path)
-    imported = omendb.create(imported_path)
+    omendb_vector.open(db_path, create=False).snapshot(snapshot_path)
+    imported = omendb_vector.create(imported_path)
     imported.import_snapshot(snapshot_path)
-    imported_memories = omendb.open(imported_path, create=False).collection(
+    imported_memories = omendb_vector.open(imported_path, create=False).collection(
         "memories", create=False
     )
     assert (
@@ -196,7 +196,7 @@ def main() -> None:
     args = parser.parse_args()
 
     if args.root is None:
-        with tempfile.TemporaryDirectory(prefix="omendb-agent-memory-release-") as tmp:
+        with tempfile.TemporaryDirectory(prefix="omendb_vector-agent-memory-release-") as tmp:
             run(Path(tmp))
         return
 
