@@ -30,7 +30,7 @@ jobs:
     steps:
       - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
       - uses: dtolnay/rust-toolchain@stable
-      - uses: Swatinem/rust-cache@391fd44ae5b9195fbdd595fc99f6c332a88c11b8 # v2
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
       - name: Build
         run: cargo build --workspace --all-targets
       - name: Test
