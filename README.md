@@ -1,53 +1,17 @@
 # OmenDB Vector
 
-> **Developer preview.** OmenDB Vector is a work-in-progress embedded local
-> database for hybrid vector and text retrieval. APIs, persistence formats,
-> supported platforms, and performance are subject to change.
+Embedded local-first retrieval engine: hybrid vector, text, sparse, and
+metadata search with lifecycle and source evidence. Work in progress.
 
-The repository contains the Mojo engine and its Python API. It is source-only
-for now; package publication and release compatibility are not yet supported.
+The engine is being rebuilt in Rust from a fresh design. The prior Mojo
+engine line is preserved at tag `v0.1.0a1-mojo` and branch
+`legacy/mojo-engine`; the earlier Rust reference line lives at
+[omendb-rs](https://github.com/omendb/omendb-rs) (frozen at v0.0.37).
 
-## Build and test
+## Status
 
-Requires [Pixi](https://pixi.sh):
-
-```bash
-git clone https://github.com/omendb/omendb-vector.git
-cd omendb-vector
-pixi install
-pixi run python -m pip install -e .
-```
-
-Build the native extension and run the checks:
-
-```bash
-pixi run mojo build src/python_engine.mojo --emit shared-lib \
-  -o src/omendb_vector/_omendb_vector_engine.so
-pixi run ruff check --ignore E501 src/omendb_vector scripts examples tests/test_python_api.py
-pixi run python -m pytest tests -q
-```
-
-## Python example
-
-```python
-import omendb_vector
-
-db = omendb_vector.create("./my-db")
-docs = db.collection(
-    "docs", config=omendb_vector.CollectionConfig(dim=128, text=True)
-)
-docs.set(
-    "example",
-    vector=[0.0] * 128,
-    text="hybrid vector and text retrieval",
-    metadata={"kind": "guide"},
-)
-print(docs.search_hybrid(vector=[0.0] * 128, text="retrieval", k=1))
-```
-
-The separate [`omendb-rs`](https://github.com/omendb/omendb-rs) repository
-contains the earlier Rust vector implementation and its existing package
-history. This repository does not publish crates or Python packages yet.
+Research and design phase. No engine code is planned before the
+architecture is settled in `docs/architecture.md`.
 
 ## License
 

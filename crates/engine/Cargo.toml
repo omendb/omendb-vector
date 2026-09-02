@@ -1,0 +1,9 @@
+[package]
+name = "omendb-vector-engine"
+description = "OmenDB Vector embedded retrieval engine core"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[dependencies]

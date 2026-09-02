@@ -3,26 +3,8 @@ name: CI
 on:
   push:
     branches: [main]
-    paths:
-      - 'src/**'
-      - 'tests/**'
-      - 'scripts/**'
-      - 'examples/**'
-      - 'pyproject.toml'
-      - 'pixi.toml'
-      - 'pixi.lock'
-      - '.github/workflows/ci.yml'
   pull_request:
     branches: [main]
-    paths:
-      - 'src/**'
-      - 'tests/**'
-      - 'scripts/**'
-      - 'examples/**'
-      - 'pyproject.toml'
-      - 'pixi.toml'
-      - 'pixi.lock'
-      - '.github/workflows/ci.yml'
 
 permissions:
   contents: read
@@ -32,42 +14,28 @@ concurrency:
   cancel-in-progress: true
 
 env:
-  PYTHONNOUSERSITE: '1'
+  CARGO_TERM_COLOR: always
 
 jobs:
   checks:
     name: Checks (${{ matrix.os }})
     runs-on: ${{ matrix.os }}
-    timeout-minutes: 30
+    timeout-minutes: 15
     strategy:
       fail-fast: false
       matrix:
         os:
           - macos-14
           - ubuntu-24.04
-
-    env:
-      DYLD_LIBRARY_PATH: ${{ github.workspace }}/.pixi/envs/default/lib
-      LD_LIBRARY_PATH: ${{ github.workspace }}/.pixi/envs/default/lib
-
     steps:
       - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
-      - uses: prefix-dev/setup-pixi@1b2de7f3351f171c8b4dfeb558c639cb58ed4ec0 # v0.9.5
-        with:
-          pixi-version: v0.63.2
-          locked: true
-
-      - name: Build Mojo engine
-        run: pixi run mojo build src/python_engine.mojo --emit shared-lib -o src/omendb_vector/_omendb_vector_engine.so
-
-      - name: Install package
-        run: UV_NO_BUILD= pixi run uv pip install -e .
-
-      - name: Ruff
-        run: pixi run ruff check --ignore E501 src/omendb_vector scripts examples tests/test_python_api.py
-
-      - name: Python tests
-        run: pixi run python -m pytest tests -q
-
-      - name: Quickstart smoke
-        run: pixi run python examples/quickstart.py --help
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@391fd44ae5b9195fbdd595fc99f6c332a88c11b8 # v2
+      - name: Build
+        run: cargo build --workspace --all-targets
+      - name: Test
+        run: cargo test --workspace
+      - name: Clippy
+        run: cargo clippy --workspace --all-targets -- -D warnings
+      - name: Format
+        run: cargo fmt --all -- --check
