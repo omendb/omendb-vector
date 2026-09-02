@@ -1803,7 +1803,7 @@ def test_hybrid_search_uses_rrf_with_score_evidence() -> None:
         metadata={"kind": "guide"},
     )
     docs.set("vector-only", vector=[0.1, 0.0], text="release notes")
-    docs.set("text-only", vector=[10.0, 0.0], text="install guide")
+    docs.set("text-only", vector=[10.0, 0.0], text="install guide with troubleshooting steps")
 
     results = docs.search_hybrid(
         vector=[0.0, 0.0],
