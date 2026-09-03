@@ -33,7 +33,7 @@ Bindings wait until the core API shape stabilizes. No `kernels/` Mojo lane until
 
 ## 3. Data model
 
-- **Canonical records** are the sole mutation authority: stable external IDs, dense vector (F32), text, typed metadata, lifecycle state (live / deleted-tombstone / superseded).
+- **Canonical records** are the sole mutation authority: stable external IDs, dense vector (F32) at full collection dim, text, typed metadata, lifecycle state (live / deleted-tombstone / superseded). Queries may use a prefix dim ≤ stored dim (Matryoshka-coherent); norms tracked explicitly for cosine/IP correctness.
 - **Derived everything else:** HNSW topology, quantized traversal codes, BM25 postings, filter bitmaps, adjacency sidecars. Generation-bound, checksummed, rebuildable from canonical. Damaged derived state fails closed or rebuilds; it never makes canonical state ambiguous.
 - **Segments:** mutable in-RAM **L0** (WAL-backed, exact scan) + **immutable segments** (canonical payloads + derived artifacts + manifest). Queries fan out over L0 + segments, merge by exact final score, apply lifecycle visibility after every candidate path.
 - **Manifest** per generation: segment list, capability/checksum metadata, commit sequence, config fingerprint. Atomic publish; incomplete generations fail closed.

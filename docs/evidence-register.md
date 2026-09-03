@@ -87,7 +87,9 @@ Language-neutral research backing the fresh Rust engine design. Priors (Apr–Ju
 - **Tantivy architecture (primary source, ARCHITECTURE.md + docs.rs):** immutable segments with UUID ids, per-component files (`segment_id.ext`), atomic `meta.json` commit, alive-bitset deletes (`.del` files, immutable), compact `[0, max_doc)` DocId space, background merges for tombstone reclamation + segment-count control, `Searcher` as immutable snapshot over `SegmentReader`s, in-memory batch → immutable on-disk conversion, LZ4 docstore, columnar fast fields, `BlockSegmentPostings` with `block_max_score` (Block-Max WAND). Maps ~1:1 onto our segment model — this is the closest production analog of our storage architecture; study it as the worked example, not just a pattern source.
 - **Qdrant multivector in production:** see §6. Prefetch-then-rescore with unindexed quantized token vectors is the serving shape to copy.
 
-## 12. Coverage gaps (still open — queued as tk subtasks)
+## 12. Coverage gaps (still open — queued as tk subtasks; v0-gating reads closed, see §13)
+
+- VIBE paper full read; ann-benchmarks current plots (not summaries); DiskANN repo state verification.
 
 - VIBE paper full read; ann-benchmarks current plots (not summaries); DiskANN repo state verification.
 - USearch internals (SIMD HNSW, 3k-line embedded design — closest kernel analog).
@@ -106,3 +108,8 @@ Language-neutral research backing the fresh Rust engine design. Priors (Apr–Ju
 3. Filtered routing: exact-fallback guarantee + **RACORN-1 as the named low-selectivity upgrade** (§2).
 4. Fusion: **weakest-link guard** added to RRF default (§8).
 5. New reproduction tracks: **PAG, AQR-HNSW** (§1). Challenge queue for HNSW, not v0 backends.
+
+## 13. v0-gating reads (closed Sep 2026)
+
+- **Matryoshka (MRL) verdict — no variable-length storage needed:** truncation = prefix dims (OpenAI 1536→256 still beats ada-002 1536); production pattern is funnel search (Milvus: split head/tail fields, search head, rerank full — Milvus can't search subsets natively). Same text at different `dimensions` params is NOT a truncation (similar, not prefix). **Format decision:** per-collection fixed dim, full vectors canonical; queries may use prefix dim ≤ stored dim as first-class (MRL guarantees prefix coherence); norms tracked explicitly for cosine/IP correctness. This maps exactly onto traversal-head + canonical-rerank: MRL heads *are* traversal vectors.
+- **Tantivy full read (ARCHITECTURE.md, primary):** immutable UUID segments, per-component files, atomic meta.json, alive-bitset deletes, compact DocId, background merges, snapshot readers, writer→serializer→reader split, **Directory trait** (MmapDirectory/RamDirectory — precedent validating our storage-provider seam), LZ4 docstore (slow path, top-k fetch only), bitpacked columnar fast fields (1-fetch), FST termdict → TermInfo → postings. Transfers adopted: all of the above except Tantivy's 1:1 field-indexing limit (we index fields into multiple structures) and no-primary-id (we keep stable external IDs).
