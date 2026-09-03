@@ -56,8 +56,15 @@ Bindings wait until the core API shape stabilizes. No `kernels/` Mojo lane until
 
 - Predicate eval: typed per-field indexes (equality inverted, range sorted, presence bitmaps) → single allow-list bitmap. AND=intersect, OR=union.
 - Routing by selectivity estimate: tiny allowed set → exact scan; large → in-filter HNSW traversal; **exact fallback guarantees full-k** whenever enough eligible docs exist.
+- Fanout rule (from CGIF theory, lifted as a planner invariant): exploration recall is determined by local satisfying fanout — connected above ~(1+e)log k, fragmented below. The planner **measures fanout and routes to exact when unmet**, rather than trusting traversal into a fragmented subgraph.
 - In-filter mechanism (specified, implementation sequenced after core): **RACORN-1 ASF** — filter-failing nodes admitted as transient bridges (candidate queue only, never results), count = deficit vs `n × bridge_ratio` (default 1.0), stride-sampled for spatial diversity, failing nodes registered visited inside the ASF branch; auto-activates at selectivity ≲ 1/M. Formal cost/recall analysis + 4 datasets × 21 selectivities + production-family adoption (Weaviate/Lucene/Vespa/Qdrant ACORN lineage). RACORN-1+ exact fallback is the same guarantee as our exact-fallback rule.
 - Reproduction-then-promote: **PAG** as HNSW-challenger backend (code + bench scripts available); promotes to default on verified independent evidence.
+- Text module is Tantivy-shaped: immutable per-segment postings with UUID segment ids, alive-bitset deletes, compact doc-id space, background merges, snapshot readers, block-max pruning on postings. Closest production analog of our segment model — study as worked example.
+- Future multivector serving shape (from Qdrant production): prefetch (BM25/dense) then rescore with unindexed quantized token vectors; no token-vector graph. Applies when multivector lands.
+
+### Segment-native co-design (novel-opportunity thesis)
+
+Every existing graph+partition hybrid is filtered-only (CGIF), static/rebuild-bound (ScaNN/SOAR), or bolted (per-partition graphs with no co-design). Our segment model offers a co-design no one has built: immutable segments as natural IVF partitions with per-partition graphs and a centroid router, where the partition layer *is* the mutation/lifecycle unit (churn via L0 + compaction, never rebuilds). Pursue only with ann-benchmarks harness + ablations + writeup; the engine build itself is the prerequisite regardless.
 - Fusion: **RRF default** + path-wise quality assessment (weakest-link guard: a degraded path is down-weighted/excluded before fusion). DBSF later for large candidate windows.
 
 ## 7. Storage tiers and seams
@@ -81,7 +88,7 @@ Single-writer + snapshot readers. Readers pin generations; checkpoint reclamatio
 ## 10. Benchmark plan
 
 - **Regression floor:** SIFT-100K, 128D, M=16, ef=100 — match-or-beat the omendb-rs reference (build ~24,881 vec/s, single ~2,324 QPS, batch ~39,905 QPS, recall@10 99.8%).
-- **Beyond the floor:** modern embedding dims (384/768/1536 — behavior differs strongly by dimension, per PAG evidence); filtered matrix (unfiltered / 50% / 5% / <1% / correlated); cold-start + mmap page-fault accounting; insert/delete churn with recall-drift tracking; p50/p95/p99 always.
+- **Beyond the floor:** modern embedding dims (384/768/1536 — behavior differs strongly by dimension, per PAG evidence); **out-of-distribution sets required** (Glass-class methods collapse to ~70% on hard OOD — in-distribution-only numbers are not citable); filtered matrix (unfiltered / 50% / 5% / <1% / correlated); cold-start + mmap page-fault accounting; insert/delete churn with recall-drift tracking; p50/p95/p99 always.
 - **Honesty rules (settled, non-negotiable):** no claim without recall + dataset/config/hardware + build mode + latency percentiles. Symmetric setups; headline multipliers treated as guilty until reproduced.
 
 ## 11. Open questions for review
