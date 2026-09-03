@@ -16,7 +16,7 @@
 //! u64 external_id
 //! u16 dim             (stored dimensionality of this record)
 //! f32 x dim           (vector, finite)
-//! u32 norm_bits       (IEEE-754 bits of full-dim L2 norm; 0 = untracked)
+//! u32 norm_bits       (IEEE-754 bits of full-dim L2 norm; 0xFFFFFFFF = untracked)
 //! u32 text_len, u8 * text_len   (0xFFFFFFFF = no text)
 //! u16 meta_count, meta entries:
 //!     u16 key_len, key bytes, u8 value kind, value bytes
@@ -123,6 +123,10 @@ pub struct Record {
 }
 
 const NO_TEXT: u32 = 0xFFFF_FFFF;
+/// Norm-bits sentinel meaning "norm untracked". 0xFFFFFFFF is a NaN
+/// payload (all-ones) — no finite f32 encodes to it, so a genuinely
+/// tracked norm (including 0.0) never collides with the sentinel.
+const NO_NORM: u32 = 0xFFFF_FFFF;
 
 impl Record {
     /// Create a live record; norm is untracked until computed.
@@ -187,7 +191,17 @@ impl Record {
             }
             out.extend_from_slice(&v.to_le_bytes());
         }
-        out.extend_from_slice(&self.norm.map(|n| n.to_bits()).unwrap_or(0).to_le_bytes());
+        match self.norm {
+            Some(n) => {
+                if !n.is_finite() {
+                    return Err(EngineError::Schema(
+                        "norm is non-finite (vector magnitude overflows f32)".into(),
+                    ));
+                }
+                out.extend_from_slice(&n.to_bits().to_le_bytes());
+            }
+            None => out.extend_from_slice(&NO_NORM.to_le_bytes()),
+        }
         match &self.text {
             Some(t) => {
                 out.extend_from_slice(&(t.len() as u32).to_le_bytes());
@@ -227,10 +241,14 @@ impl Record {
             vector.push(v);
         }
         let norm_bits = take_u32(buf, &mut off)?;
-        let norm = if norm_bits == 0 {
+        let norm = if norm_bits == NO_NORM {
             None
         } else {
-            Some(f32::from_bits(norm_bits))
+            let n = f32::from_bits(norm_bits);
+            if !n.is_finite() {
+                return Err(EngineError::Codec("non-finite norm".into()));
+            }
+            Some(n)
         };
         let text_len = take_u32(buf, &mut off)?;
         let text = if text_len == NO_TEXT {
@@ -390,6 +408,31 @@ mod tests {
         for cut in 1..bytes.len() {
             assert!(Record::decode(&bytes[..cut]).is_err());
         }
+    }
+
+    #[test]
+    fn zero_vector_tracked_norm_survives_round_trip() {
+        let r = Record::new(9, vec![0.0f32; 3]).with_norm();
+        let back = Record::decode(&r.encode().unwrap()).unwrap();
+        assert_eq!(back.norm, Some(0.0));
+        assert_eq!(r, back);
+    }
+
+    #[test]
+    fn overflow_norm_rejected_at_encode() {
+        let r = Record::new(10, vec![1e38f32; 4]).with_norm();
+        assert!(matches!(r.encode(), Err(EngineError::Schema(_))));
+    }
+
+    #[test]
+    fn decode_rejects_nonfinite_norm_payload() {
+        // hand-craft a payload with an inf norm where the field lives:
+        // lifecycle(1) + id(8) + dim(2) + dim*4 vector bytes
+        let r = Record::new(11, vec![0.5f32; 2]);
+        let mut bytes = r.encode().unwrap();
+        let norm_off = 1 + 8 + 2 + 2 * 4;
+        bytes[norm_off..norm_off + 4].copy_from_slice(&f32::INFINITY.to_bits().to_le_bytes());
+        assert!(matches!(Record::decode(&bytes), Err(EngineError::Codec(_))));
     }
 
     #[test]
