@@ -11,3 +11,12 @@ First application: MUVERA removed entirely (not demoted to a track). It
 fails on arbitrary user models without STE retraining, and TACHIOM covers
 the approximate-multivector future with no model demands. If a model
 co-design story ever exists, MUVERA can be re-proposed against this bar.
+
+Tracks are gated promotions, not parking lots. A track names its evidence
+threshold and next action: PAG → reproduce now (code + bench scripts
+available), promote to default backend on verified independent evidence;
+RACORN-1 ASF → specified as the in-filter mechanism on current evidence
+(see architecture §6), implementation sequenced after core; AQR-HNSW stays
+a track (single paper, no code check yet). If evidence shows something is
+meaningfully better than the current design, the design changes — the bar
+guards against cruft, not against proven wins.

@@ -56,7 +56,8 @@ Bindings wait until the core API shape stabilizes. No `kernels/` Mojo lane until
 
 - Predicate eval: typed per-field indexes (equality inverted, range sorted, presence bitmaps) → single allow-list bitmap. AND=intersect, OR=union.
 - Routing by selectivity estimate: tiny allowed set → exact scan; large → in-filter HNSW traversal; **exact fallback guarantees full-k** whenever enough eligible docs exist.
-- Upgrade track: RACORN-1 for the low-selectivity collapse regime (measured before adopting).
+- In-filter mechanism (specified, implementation sequenced after core): **RACORN-1 ASF** — filter-failing nodes admitted as transient bridges (candidate queue only, never results), count = deficit vs `n × bridge_ratio` (default 1.0), stride-sampled for spatial diversity, failing nodes registered visited inside the ASF branch; auto-activates at selectivity ≲ 1/M. Formal cost/recall analysis + 4 datasets × 21 selectivities + production-family adoption (Weaviate/Lucene/Vespa/Qdrant ACORN lineage). RACORN-1+ exact fallback is the same guarantee as our exact-fallback rule.
+- Reproduction-then-promote: **PAG** as HNSW-challenger backend (code + bench scripts available); promotes to default on verified independent evidence.
 - Fusion: **RRF default** + path-wise quality assessment (weakest-link guard: a degraded path is down-weighted/excluded before fusion). DBSF later for large candidate windows.
 
 ## 7. Storage tiers and seams
