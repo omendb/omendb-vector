@@ -71,8 +71,15 @@ Language-neutral research backing the fresh Rust engine design. Priors (Apr–Ju
 ### Thoroughness audit (honest)
 
 - Pass 1: 8 areas × 1 search step, excerpt-level, zero paper reads. Survey-grade.
-- Pass 2 (this): 3 full reads (RACORN-1 HTML, TACHIOM/PAG/RaBitQ-note abs+code pages) + 6 deep searches. Claim-level verification on the decision-critical points (MUVERA viability, code availability, CGIF mechanism).
-- Not yet done: full PDF reads of PAG/TACHIOM/CGIF/OctopusANN/PipeANN; reproduction runs; code audits. Required before any 'we beat X' claim or novel-work writeup.
+- Pass 2: 3 full reads (RACORN-1 HTML, TACHIOM/PAG/RaBitQ-note abs+code pages) + 6 deep searches. Claim-level verification on the decision-critical points (MUVERA viability, code availability, CGIF mechanism).
+- Pass 3: CGIF full PDF (§1–§3: theory + system design), PAG full PDF (§1–§2: D1–D6 framework, PRT/PES mechanism), TACHIOM full HTML (§1–§2: TAC pipeline, gather/refine decoupling).
+- Not yet done: SSR full read; OctopusANN/PipeANN/IVF-RaBitQ/static-pruning full reads; PAG/TACHIOM/CGIF/RACORN reproduction runs; code audits. Required before any 'we beat X' claim or novel-work writeup.
+
+### Pass-3 mechanism notes
+
+- **CGIF theory (the part that matters for us):** MNNG compressibility lemma — filtered induced subgraph of a full-data MNNG *equals* the purpose-built MNNG on the subset (HNSW cannot provide this: heuristic pruning breaks the equivalence). Fanout dichotomy: satisfying-subgraph fragments below fanout 1−ε, connected above (1+ε)log k. Design consequence: any predicate-aware explorer needs *measured* local satisfying fanout ≥ log k — a design rule we can lift directly into our filtered planner (assert fanout, fall back to exact when unmet). ACORN critique confirmed from primary source: m-NN graphs navigate worse than HNSW, collapse at φ<0.01, cost more to build. Code: github.com/rutgers-db/CGIF (PVLDB artifact-evaluated).
+- **PAG mechanism:** PG (routing tests on original vectors) vs QG (quantized graph — sensitive to distribution, fails indexing/memory/insertion criteria). PRT = probabilistic routing test (angle-thresholding under ℓ2/cosine); TFB reuses false positives to refine thresholds; PES expands in-degrees on hard datasets (fixes HNSW's small-in-degree failure). D1–D6 six-demand framework is the benchmark template we should steal for our own eval (QPS-recall + build + memory + high-dim + K-robustness + online insertion). PAG-Lite hits Tier-4 indexing+memory — relevant to our L0/flush economics.
+- **TACHIOM mechanism:** Pisa/CNR group (EMVB lineage). TAC 4-stage pipeline (tail/damped-sqrt(n)·spread/bounding/reconciliation); top-100 tokens = 41–45% of all vectors — the quantitative case for token-aware allocation. Gather/refine decoupling (centroids-only HNSW gather, PQ-residual MaxSim refine) is the architectural pattern to copy. IGP already does HNSW-over-centroids — TACHIOM's novelty is TAC + decoupled PQ layout, not the graph itself.
 
 ## What this changes vs the priors
 
