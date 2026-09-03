@@ -33,11 +33,11 @@ Language-neutral research backing the fresh Rust engine design. Priors (Apr–Ju
 - **Cross-engine pruning study (arxiv 2608.16309, Aug 2026):** index-side static pruning is portable (1.2–6.6× latency, 18–82% smaller — sparse retrieval is memory-bound); query pruning is already internalized by modern engines (BMP's β, SEISMIC's query_cut); static + dynamic compose (2.5× at NDCG within 0.003).
 - **v0 implication:** none (sparse deferred per v0 scope). Phase-2 design input: inverted index + BMP-style dynamic pruning; encoders stay external (we index weights, we don't train models).
 
-## 6. Multivector (deferred; TACHIOM replaces MUVERA as the named candidate)
+## 6. Multivector (deferred; MUVERA removed per ADR 0003)
 
-- **TACHIOM (arxiv 2604.28142, Apr 2026):** token-aware clustering (247× faster than k-means at 262k centroids), HNSW over centroids + PQ residuals + exact MaxSim refine; 2.5–9.8× retrieval speedup at comparable effectiveness — **without model retraining**. This is the first approximate backend that survives the FDE/"Party is Over" caveat.
-- **MUVERA** stands as the FDE baseline with guarantees, but the STE-retraining requirement keeps it out as a general engine-side default.
-- **v0 implication:** none (multivector deferred). The multivector strategy updates: **exact MaxSim** documented path; **TACHIOM** named approximate candidate; MUVERA demoted to baseline reference.
+- **TACHIOM (arxiv 2604.28142, Apr 2026):** token-aware clustering (247× faster than k-means at 262k centroids), HNSW over centroids + PQ residuals + exact MaxSim refine; 2.5–9.8× retrieval speedup at comparable effectiveness — **without model retraining**. The approximate-multivector track.
+- **MUVERA removed entirely** (ADR 0003, Sep 2026): fails on arbitrary user models without STE retraining; TACHIOM covers the future with no model demands; nothing is added merely to support a method. Re-proposable only with a model co-design story that clears the earn-its-place bar.
+- **Qdrant production pattern (primary source, Qdrant 1.19 docs):** multivector fields stored with **HNSW disabled (m=0)**, used only to rescore a prefetch candidate set (BM25 or dense first, prefetch limit >> final limit); per-token vectors quantized with `turbo4` (4-bit, 1/8 storage, low-single-digit recall cost). This is the production shape of exact-MaxSim-as-rerank — adopt it when multivector lands: no token-vector graph, quantized token store, prefetch-then-rescore planner.
 
 ## 7. Object tier (seam, not v0): turbopuffer validates the whole shape
 
@@ -80,6 +80,24 @@ Language-neutral research backing the fresh Rust engine design. Priors (Apr–Ju
 - **CGIF theory (the part that matters for us):** MNNG compressibility lemma — filtered induced subgraph of a full-data MNNG *equals* the purpose-built MNNG on the subset (HNSW cannot provide this: heuristic pruning breaks the equivalence). Fanout dichotomy: satisfying-subgraph fragments below fanout 1−ε, connected above (1+ε)log k. Design consequence: any predicate-aware explorer needs *measured* local satisfying fanout ≥ log k — a design rule we can lift directly into our filtered planner (assert fanout, fall back to exact when unmet). ACORN critique confirmed from primary source: m-NN graphs navigate worse than HNSW, collapse at φ<0.01, cost more to build. Code: github.com/rutgers-db/CGIF (PVLDB artifact-evaluated).
 - **PAG mechanism:** PG (routing tests on original vectors) vs QG (quantized graph — sensitive to distribution, fails indexing/memory/insertion criteria). PRT = probabilistic routing test (angle-thresholding under ℓ2/cosine); TFB reuses false positives to refine thresholds; PES expands in-degrees on hard datasets (fixes HNSW's small-in-degree failure). D1–D6 six-demand framework is the benchmark template we should steal for our own eval (QPS-recall + build + memory + high-dim + K-robustness + online insertion). PAG-Lite hits Tier-4 indexing+memory — relevant to our L0/flush economics.
 - **TACHIOM mechanism:** Pisa/CNR group (EMVB lineage). TAC 4-stage pipeline (tail/damped-sqrt(n)·spread/bounding/reconciliation); top-100 tokens = 41–45% of all vectors — the quantitative case for token-aware allocation. Gather/refine decoupling (centroids-only HNSW gather, PQ-residual MaxSim refine) is the architectural pattern to copy. IGP already does HNSW-over-centroids — TACHIOM's novelty is TAC + decoupled PQ layout, not the graph itself.
+
+## 11. Gap-closure pass (Sep 2026: benchmarks, Tantivy, Qdrant-multivector)
+
+- **Independent leaderboard state:** April 2025 ann-benchmarks full run — Glass, nmslib-HNSW, Milvus Knowhere, QSG-NGT lead glove-100-angular Pareto. **VIBE benchmark** (12 in-distribution + 6 OOD modern RAG/multimodal sets): SymphonyQG tops 5/12 at 95% recall, Glass 4/12 — but Glass recall drops to ~70% on hardest OOD queries, and benchmark wins without adoption are discounted (Glass ~140 stars vs FAISS 30k+). Market split forming: FAISS GPU-first (1.14.1 via cuVS), DiskANN billion-scale lane, USearch embedded niche (embedded in ClickHouse/DuckDB/ScyllaDB/YugabyteDB at ~3k lines), ScaNN quiet since Aug 2025. Caution: version-specific claims above come from secondary summaries — DiskANN 'Rust rewrite' and release numbers unverified against the repo; verify before citing.
+- **Tantivy architecture (primary source, ARCHITECTURE.md + docs.rs):** immutable segments with UUID ids, per-component files (`segment_id.ext`), atomic `meta.json` commit, alive-bitset deletes (`.del` files, immutable), compact `[0, max_doc)` DocId space, background merges for tombstone reclamation + segment-count control, `Searcher` as immutable snapshot over `SegmentReader`s, in-memory batch → immutable on-disk conversion, LZ4 docstore, columnar fast fields, `BlockSegmentPostings` with `block_max_score` (Block-Max WAND). Maps ~1:1 onto our segment model — this is the closest production analog of our storage architecture; study it as the worked example, not just a pattern source.
+- **Qdrant multivector in production:** see §6. Prefetch-then-rescore with unindexed quantized token vectors is the serving shape to copy.
+
+## 12. Coverage gaps (still open — queued as tk subtasks)
+
+- VIBE paper full read; ann-benchmarks current plots (not summaries); DiskANN repo state verification.
+- USearch internals (SIMD HNSW, 3k-line embedded design — closest kernel analog).
+- ScaNN/SOAR post-Aug-2025 status; Vespa production hybrid; Milvus/Knowhere partition keys.
+- Faiss 1.14/cuVS docs for the GPU lane; CAGRA state.
+- Post-Aug-2026 arXiv firehose (coverage stops ~Aug 2026 by construction).
+- Production-failure literature (Chroma postmortems, LanceDB limits posts — the DuckDB-#81 genre).
+- WAL/storage-engine literature for the durability core (RocksDB/SQLite WAL discipline beyond our pattern sources).
+- Benchmark harness mechanics (ann-benchmarks, BigANN, BEIR) for our own harness design.
+- Embedding trends: Matryoshka variable dims (affects fixed-dim assumptions), binary embedding models.
 
 ## What this changes vs the priors
 
