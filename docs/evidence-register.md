@@ -56,6 +56,24 @@ Language-neutral research backing the fresh Rust engine design. Priors (Apr–Ju
 - **DuckDB vss durability gap confirmed worse than reported:** official docs admit the WAL-recovery hole; issue #81 documents repeated corruption incidents and workarounds. Strongest third-party evidence for the durability wedge.
 - **Mojo 1.0 facts (for the language record):** compiler fully open (Apache 2.0, Aug 2026) but contributions gated; source-stable only, **no ABI stability**; small stable stdlib set; no robust async; no native Windows. CPU kernel parity with Rust confirmed (single-microbenchmark + ORNL GPU study: ~87% of CUDA memory-bound).
 
+## 10. Deep-pass additions (Sep 2026: full-paper reads + code checks)
+
+- **CGIF (VLDB'26, graph+IVF co-design for filtered search):** HNSW navigation phase unchanged; exploration phase draws from HNSW neighbors + two-hop + IVF cluster augmentation with per-cluster cursors. MNNG theory (satisfying-subgraph equivalence) + local-satisfying-fanout threshold. Laion: 1600 QPS @ 0.95 recall (+34% over next best); Wiki-Range 2×; 677 distance comps vs 925 (NaVix) / 20000 (Faiss-IVF) at 0.80 recall. O((M+1)n) storage.
+- **Production IVF+HNSW hybrids:** LanceDB ships `IVF_HNSW_FLAT/SQ/PQ` (IVF partitions, per-partition HNSW) + `IVF_RQ` (RaBitQ-style, 1/32 size, preferred for filtered workloads); FAISS guidance: HNSW as coarse quantizer attractive (fewer params than IVFPQFastScan).
+- **SOAR (Google, spillover assignment):** orthogonality-amplified residual loss for redundant partition assignment — directly attacks clustering accuracy loss; SOTA ANN benchmark results with fast build, low memory.
+- **RACORN-1 (full read):** Naver Corp; ASF (filter-failing nodes as transient bridges) + stride sampling + RACORN-1+ exact fallback. Formal cost/recall analysis under random-graph model; evaluated 4 datasets × 21 selectivities. Mechanism is traversal-level — applies to any graph backend (NSG named), not HNSW-only.
+- **TACHIOM (full abs + code check):** SIGIR'26, 6pp. TAC clustering + HNSW-over-centroids gather + PQ-residual MaxSim refine. Code: github.com/TusKANNy/tachiom (**Rust + PyO3**, MIT, PyPI `tachiom` v0.3.4, SIGIR repro configs in-repo). Easiest reproduction track we have — same language, permissive license (study, don't vendor blindly).
+- **PAG (code check):** github.com/KejingLu-810/PAG/ (C++/Python, AVX-512 kernels, bench + repro scripts). Reproducible challenger.
+- **MUVERA status (LightOn, Jun 2026):** root cause confirmed (anisotropic token cone, cosine ~0.95 → random projections degenerate); **STE regularization fixes it** — model lightonai/LateOn-regularized on HF; transfers across methods/seeds; PLAID preserved. MUVERA viable *with model co-design only*; dead on arbitrary user models.
+- **RaBitQ vindicated:** symmetric comparison (Gao et al., Apr 2026) — RaBitQ beats TurboQuant most settings; TurboQuant's 8× claim traced to asymmetric setup, some results unreproducible. GPU-native IVF-RaBitQ (VLDB) + LanceDB IVF_RQ = production validation. Our Mojo `rabitq.mojo` is algorithm reference.
+- **LeanVec/LVQ (Intel SVS, production):** LVQ4x8 two-level (4-bit traversal + 8-bit rerank) mirrors our traversal+rerank contract; LeanVec adds dim-reduction for 768d+. OOD variant handles query/db distribution shift. Evaluation track alongside SQ8/RaBitQ.
+
+### Thoroughness audit (honest)
+
+- Pass 1: 8 areas × 1 search step, excerpt-level, zero paper reads. Survey-grade.
+- Pass 2 (this): 3 full reads (RACORN-1 HTML, TACHIOM/PAG/RaBitQ-note abs+code pages) + 6 deep searches. Claim-level verification on the decision-critical points (MUVERA viability, code availability, CGIF mechanism).
+- Not yet done: full PDF reads of PAG/TACHIOM/CGIF/OctopusANN/PipeANN; reproduction runs; code audits. Required before any 'we beat X' claim or novel-work writeup.
+
 ## What this changes vs the priors
 
 1. Storage scope: **RAM + mmap in v0; NVMe and object as contracted seams** (§4, §7 name the candidates and acceptance contracts).
