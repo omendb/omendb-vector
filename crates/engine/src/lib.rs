@@ -15,6 +15,7 @@ pub mod error;
 pub mod codec;
 
 pub mod records;
+pub mod wal;
 
 pub use error::{EngineError, EngineResult};
 pub use records::{l2_norm, Lifecycle, MetaValue, Record};
