@@ -24,6 +24,8 @@ pub mod segments;
 
 pub mod store;
 
+pub mod text;
+
 pub mod wal;
 
 pub use error::{EngineError, EngineResult};
