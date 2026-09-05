@@ -28,7 +28,7 @@
 //! error; a zero-norm stored record is unscorable and excluded.
 
 use crate::error::{EngineError, EngineResult};
-use crate::index::{ExactIndex, IndexedVector, VectorIndex};
+use crate::index::{ExactIndex, HnswConfig, HnswIndex, IndexedVector, VectorIndex};
 use crate::records::{Lifecycle, Record};
 use crate::segments::{
     gc_segments, load_manifest, publish_manifest, write_segment, Manifest, SegmentEntry,
@@ -37,10 +37,22 @@ use crate::segments::{
 use crate::wal::Wal;
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
+use std::sync::Arc;
 
 // Re-export the query types so callers see one coherent API surface;
 // the definitions live in `index` where every backend shares them.
 pub use crate::index::{Hit, Metric};
+/// Which index backend serves sealed segments.
+#[derive(Debug, Clone, Default)]
+pub enum IndexBackend {
+    /// Flat exact scan (default): correctness oracle behavior,
+    /// zero build cost.
+    #[default]
+    Exact,
+    /// HNSW graph for one metric; queries under other metrics fall
+    /// back to the backend's internal exact scan.
+    Hnsw(HnswConfig),
+}
 
 /// What `Store::open` recovered.
 #[derive(Debug)]
@@ -73,7 +85,6 @@ impl L0 {
 }
 
 /// Open store: single writer, crash-safe, derived-artifact rebuild.
-#[derive(Debug)]
 pub struct Store {
     dir: PathBuf,
     wal: Wal,
@@ -81,9 +92,12 @@ pub struct Store {
     /// Segment files in the manifest, opened.
     segments: Vec<SegmentReader>,
     /// Per-segment index (same order as `segments`). Built at seal
-    /// time and on open; exact backend for now, HNSW later. Missing
-    /// entries are rebuilt inline (fail-safe: never panic).
-    seg_indexes: Vec<ExactIndex>,
+    /// time and on open per `backend`; trait objects so any
+    /// `VectorIndex` drops in. A missing/unbuilt index is rebuilt
+    /// inline (fail-safe: never panic).
+    seg_indexes: Vec<Arc<dyn VectorIndex>>,
+    /// Backend used for sealed segments.
+    backend: IndexBackend,
     /// Live ids in segments: id -> seq (sealed segments hold only
     /// live records, so membership == liveness).
     seg_live: HashMap<u64, u64>,
@@ -92,12 +106,50 @@ pub struct Store {
     l0: L0,
 }
 
+impl std::fmt::Debug for Store {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("Store")
+            .field("dir", &self.dir)
+            .field("dim", &self.dim)
+            .field("segments", &self.segments.len())
+            .field("checkpoint_seq", &self.checkpoint_seq)
+            .field("generation", &self.generation)
+            .field("l0_records", &self.l0.live.len())
+            .finish_non_exhaustive()
+    }
+}
+
 impl Store {
     /// Open (or create) a store at `dir`. Exactly one writer process;
     /// no file locking in v0.
     pub fn open<P: AsRef<Path>>(dir: P) -> EngineResult<(Store, StoreRecovery)> {
+        Self::open_with(dir, IndexBackend::default())
+    }
+
+    /// Open with an explicit index backend for sealed segments.
+    pub fn open_with<P: AsRef<Path>>(
+        dir: P,
+        backend: IndexBackend,
+    ) -> EngineResult<(Store, StoreRecovery)> {
         let dir = dir.as_ref().to_path_buf();
         std::fs::create_dir_all(&dir)?;
+        // Validate the backend config up front: an invalid choice
+        // (e.g. HNSW with dot metric) must fail the open, not surface
+        // at first checkpoint.
+        if let IndexBackend::Hnsw(cfg) = &backend {
+            if cfg.metric == Metric::Dot {
+                return Err(EngineError::Schema(
+                    "HNSW backend cannot use Dot metric (use L2 or Cosine; Dot queries \
+                     fall back to exact)"
+                        .into(),
+                ));
+            }
+            if cfg.m == 0 || cfg.m0 < cfg.m {
+                return Err(EngineError::Schema(
+                    "HNSW backend requires m >= 1 and m0 >= m".into(),
+                ));
+            }
+        }
         let (wal, wal_rec) = Wal::open(dir.join("wal.log"))?;
 
         let mut rebuilt = false;
@@ -138,17 +190,22 @@ impl Store {
             .flat_map(|seg| seg.entries())
             .map(|e| (e.record.external_id, e.seq))
             .collect();
-        // Build per-segment indexes (exact for now; HNSW slots in here
-        // later without touching the store).
+        // Build per-segment indexes per the configured backend.
         let seg_indexes = segments
             .iter()
             .map(|seg| {
-                ExactIndex::build(seg.entries().iter().map(|e| {
-                    IndexedVector::new(e.record.external_id, e.seq, e.record.vector.clone())
-                }))
+                let vectors: Vec<IndexedVector> = seg
+                    .entries()
+                    .iter()
+                    .map(|e| {
+                        IndexedVector::new(e.record.external_id, e.seq, e.record.vector.clone())
+                    })
+                    .collect();
+                build_index(&backend, vectors)
             })
-            .collect();
+            .collect::<EngineResult<Vec<_>>>()?;
         let mut store = Store {
+            backend,
             seg_live,
             seg_indexes,
             dir,
@@ -346,7 +403,7 @@ impl Store {
             .map(|(seq, r)| IndexedVector::new(r.external_id, *seq, r.vector.clone()))
             .collect();
         if !l0_vecs.is_empty() {
-            let l0_idx = ExactIndex::build(l0_vecs);
+            let l0_idx: Arc<dyn VectorIndex> = Arc::new(ExactIndex::build(l0_vecs));
             all.extend(l0_idx.search(metric, query, pool)?);
         }
         // Merge: dedupe by external id (segments hold disjoint ids in
@@ -474,11 +531,13 @@ impl Store {
 
         // Swap in the sealed view and reset L0.
         let new_seg = SegmentReader::open(&self.dir, &name)?;
-        let new_index = ExactIndex::build(
+        let new_index = build_index(
+            &self.backend,
             new_seg
                 .entries()
                 .iter()
-                .map(|e| IndexedVector::new(e.record.external_id, e.seq, e.record.vector.clone())),
+                .map(|e| IndexedVector::new(e.record.external_id, e.seq, e.record.vector.clone()))
+                .collect(),
         );
         self.seg_live = new_seg
             .entries()
@@ -486,12 +545,28 @@ impl Store {
             .map(|e| (e.record.external_id, e.seq))
             .collect();
         self.segments = vec![new_seg];
-        self.seg_indexes = vec![new_index];
+        self.seg_indexes = vec![new_index?];
         self.checkpoint_seq = committed;
         self.l0 = L0::default();
 
         gc_segments(&self.dir, &manifest)?;
         Ok(committed)
+    }
+}
+
+/// Build one segment index for the chosen backend. Invalid backend
+/// configuration (e.g. HNSW with dot metric) is a caller error and
+/// fails the open/checkpoint — silent degradation would hide it.
+fn build_index(
+    backend: &IndexBackend,
+    vectors: Vec<IndexedVector>,
+) -> EngineResult<Arc<dyn VectorIndex>> {
+    match backend {
+        IndexBackend::Exact => Ok(Arc::new(ExactIndex::build(vectors))),
+        IndexBackend::Hnsw(cfg) => Ok(Arc::new(
+            HnswIndex::build(cfg.clone(), vectors)
+                .map_err(|e| EngineError::Schema(format!("index backend unusable: {e}")))?,
+        )),
     }
 }
 
@@ -511,6 +586,74 @@ mod tests {
 
     fn rec(id: u64, x: f32) -> Record {
         Record::new(id, vec![x, x * 0.5])
+    }
+
+    #[test]
+    fn hnsw_backend_matches_oracle_across_boundaries() {
+        let dir = tmp_dir("hnswire");
+        let cfg = HnswConfig::default();
+        let mut s = Store::open_with(&dir, IndexBackend::Hnsw(cfg)).unwrap().0;
+        // 300 vectors: enough that the graph path actually runs
+        // (n > 100, k < n).
+        let mut rng = 12345u64;
+        let mut next = || {
+            rng = rng
+                .wrapping_mul(6364136223846793005)
+                .wrapping_add(1442695040888963407);
+            (rng >> 33) as f32 / 2.0_f32.powi(31)
+        };
+        for i in 0..300u64 {
+            s.upsert(Record::new(i, vec![next(), next(), next()]))
+                .unwrap();
+        }
+        s.commit().unwrap();
+        s.checkpoint().unwrap(); // segment built with HNSW
+        for i in 300..400u64 {
+            s.upsert(Record::new(i, vec![next(), next(), next()]))
+                .unwrap();
+        }
+        s.commit().unwrap(); // 100 fresh in L0
+                             // L2 (graph metric): search must match the oracle on the
+                             // overlap of returned ids (within the pool).
+        for k in [1usize, 5, 10] {
+            let merged = s.search(Metric::L2, &[0.5, 0.5, 0.5], k, k).unwrap();
+            let oracle = s.exact_top_k(Metric::L2, &[0.5, 0.5, 0.5], k).unwrap();
+            let m: Vec<u64> = merged.iter().map(|h| h.external_id).collect();
+            let o: Vec<u64> = oracle.iter().map(|h| h.external_id).collect();
+            // HNSW is approximate: require >= 80% overlap at each k
+            // (the gate for store-level recall, stricter than the
+            // 0.002 rule which applies to backend-vs-oracle only).
+            let overlap = m.iter().filter(|id| o.contains(id)).count();
+            assert!(
+                overlap as f64 >= (k as f64) * 0.8,
+                "k={k}: overlap {overlap}/{k} — merged {m:?} vs oracle {o:?}"
+            );
+            // Scores for the ids both paths returned must be equal.
+            for h in &merged {
+                if let Some(oh) = oracle.iter().find(|x| x.external_id == h.external_id) {
+                    assert_eq!(h.score, oh.score);
+                }
+            }
+        }
+        // Dot on an L2 graph: internal fallback must be EXACT equal.
+        let merged = s.search(Metric::Dot, &[1.0, 1.0, 1.0], 5, 5).unwrap();
+        let oracle = s.exact_top_k(Metric::Dot, &[1.0, 1.0, 1.0], 5).unwrap();
+        assert_eq!(
+            merged.iter().map(|h| h.external_id).collect::<Vec<_>>(),
+            oracle.iter().map(|h| h.external_id).collect::<Vec<_>>()
+        );
+    }
+
+    #[test]
+    fn invalid_hnsw_backend_fails_open() {
+        let dir = tmp_dir("badbackend");
+        // dot metric config: must fail loud, not silently degrade
+        let cfg = HnswConfig {
+            metric: Metric::Dot,
+            ..HnswConfig::default()
+        };
+        let err = Store::open_with(&dir, IndexBackend::Hnsw(cfg)).unwrap_err();
+        assert!(matches!(err, EngineError::Schema(_)));
     }
 
     #[test]
