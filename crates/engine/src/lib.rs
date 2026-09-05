@@ -16,6 +16,8 @@ pub mod codec;
 
 pub mod fsutil;
 
+pub mod index;
+
 pub mod records;
 
 pub mod segments;
@@ -25,5 +27,6 @@ pub mod store;
 pub mod wal;
 
 pub use error::{EngineError, EngineResult};
+pub use index::{Hit, Metric, RecallReport};
 pub use records::{l2_norm, Lifecycle, MetaValue, Record};
-pub use store::{Hit, Metric, Store, StoreRecovery};
+pub use store::{Store, StoreRecovery};

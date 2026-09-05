@@ -28,6 +28,7 @@
 //! error; a zero-norm stored record is unscorable and excluded.
 
 use crate::error::{EngineError, EngineResult};
+use crate::index::{ExactIndex, IndexedVector, VectorIndex};
 use crate::records::{Lifecycle, Record};
 use crate::segments::{
     gc_segments, load_manifest, publish_manifest, write_segment, Manifest, SegmentEntry,
@@ -37,25 +38,9 @@ use crate::wal::Wal;
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 
-/// Distance/similarity metric for `exact_top_k`.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum Metric {
-    /// Inner product (larger = better).
-    Dot,
-    /// Cosine similarity (larger = better); needs nonzero norms.
-    Cosine,
-    /// Squared L2 distance (smaller = better; score is negated so
-    /// higher = better everywhere).
-    L2,
-}
-
-/// Ranked hit from `exact_top_k`.
-#[derive(Debug, Clone, PartialEq)]
-pub struct Hit {
-    pub external_id: u64,
-    pub score: f32,
-    pub seq: u64,
-}
+// Re-export the query types so callers see one coherent API surface;
+// the definitions live in `index` where every backend shares them.
+pub use crate::index::{Hit, Metric};
 
 /// What `Store::open` recovered.
 #[derive(Debug)]
@@ -69,32 +54,6 @@ pub struct StoreRecovery {
     pub rebuilt_from_wal: bool,
     /// Segment files removed after a rebuild.
     pub gc_removed: usize,
-}
-
-/// Ordered search score; higher = better (L2 is negated).
-fn score(metric: Metric, q: &[f32], v: &[f32]) -> EngineResult<f32> {
-    debug_assert!(q.len() <= v.len(), "query dim validated by caller");
-    // Prefix-dim query (Matryoshka): score over the prefix only.
-    let v = &v[..q.len()];
-    Ok(match metric {
-        Metric::Dot => q.iter().zip(v).map(|(a, b)| a * b).sum(),
-        Metric::Cosine => {
-            let qn = crate::records::l2_norm(q);
-            let vn = crate::records::l2_norm(v);
-            if qn == 0.0 || vn == 0.0 {
-                // Zero norm has no direction; 0/0 would be NaN. The
-                // caller pre-validates the query; a zero-norm stored
-                // record is unscorable and excluded by the caller.
-                return Err(EngineError::Schema("cosine of zero-norm vector".into()));
-            }
-            let dot: f32 = q.iter().zip(v).map(|(a, b)| a * b).sum();
-            dot / (qn * vn)
-        }
-        Metric::L2 => {
-            let d: f32 = q.iter().zip(v).map(|(a, b)| (a - b) * (a - b)).sum();
-            -d
-        }
-    })
 }
 
 /// The L0 RAM tier: records since the last checkpoint, keyed by
@@ -121,6 +80,10 @@ pub struct Store {
     dim: u32,
     /// Segment files in the manifest, opened.
     segments: Vec<SegmentReader>,
+    /// Per-segment index (same order as `segments`). Built at seal
+    /// time and on open; exact backend for now, HNSW later. Missing
+    /// entries are rebuilt inline (fail-safe: never panic).
+    seg_indexes: Vec<ExactIndex>,
     /// Live ids in segments: id -> seq (sealed segments hold only
     /// live records, so membership == liveness).
     seg_live: HashMap<u64, u64>,
@@ -170,12 +133,24 @@ impl Store {
             rebuilt = true; // no manifest: everything from the WAL
         }
 
+        let seg_live: HashMap<u64, u64> = segments
+            .iter()
+            .flat_map(|seg| seg.entries())
+            .map(|e| (e.record.external_id, e.seq))
+            .collect();
+        // Build per-segment indexes (exact for now; HNSW slots in here
+        // later without touching the store).
+        let seg_indexes = segments
+            .iter()
+            .map(|seg| {
+                ExactIndex::build(seg.entries().iter().map(|e| {
+                    IndexedVector::new(e.record.external_id, e.seq, e.record.vector.clone())
+                }))
+            })
+            .collect();
         let mut store = Store {
-            seg_live: segments
-                .iter()
-                .flat_map(|seg| seg.entries())
-                .map(|e| (e.record.external_id, e.seq))
-                .collect(),
+            seg_live,
+            seg_indexes,
             dir,
             wal,
             dim,
@@ -339,8 +314,67 @@ impl Store {
         out
     }
 
-    /// Exact flat scan (correctness oracle). `query.len()` may be a
-    /// prefix of the stored dim. Live records only.
+    /// Unified search: per-segment index backends + L0 exact scan,
+    /// merged, top-k overall. Same contract as `exact_top_k` (which
+    /// remains the direct oracle: single scan, no index involved).
+    /// `per_segment_k` is the candidate pool each backend contributes
+    /// before the final merge (>= k).
+    pub fn search(
+        &self,
+        metric: Metric,
+        query: &[f32],
+        k: usize,
+        per_segment_k: usize,
+    ) -> EngineResult<Vec<Hit>> {
+        if per_segment_k < k {
+            return Err(EngineError::Schema(format!(
+                "per_segment_k {per_segment_k} < k {k}"
+            )));
+        }
+        let pool = per_segment_k;
+        let mut all: Vec<Hit> = Vec::new();
+        // Sealed segments: their backend index answers.
+        for idx in &self.seg_indexes {
+            all.extend(idx.search(metric, query, pool)?);
+        }
+        // L0: fresh writes, always exact.
+        let l0_vecs: Vec<IndexedVector> = self
+            .l0
+            .live
+            .values()
+            .filter(|(_, r)| r.lifecycle == Lifecycle::Live)
+            .map(|(seq, r)| IndexedVector::new(r.external_id, *seq, r.vector.clone()))
+            .collect();
+        if !l0_vecs.is_empty() {
+            let l0_idx = ExactIndex::build(l0_vecs);
+            all.extend(l0_idx.search(metric, query, pool)?);
+        }
+        // Merge: dedupe by external id (segments hold disjoint ids in
+        // v0's single-segment layout, but stay correct for any
+        // layout), keep best score, sort, truncate.
+        let mut best: HashMap<u64, Hit> = HashMap::new();
+        for h in all {
+            match best.get(&h.external_id) {
+                Some(prev) if prev.score >= h.score => {}
+                _ => {
+                    best.insert(h.external_id, h);
+                }
+            }
+        }
+        let mut hits: Vec<Hit> = best.into_values().collect();
+        hits.sort_by(|a, b| {
+            b.score
+                .partial_cmp(&a.score)
+                .unwrap_or(std::cmp::Ordering::Equal)
+        });
+        hits.truncate(k);
+        Ok(hits)
+    }
+
+    /// Exact flat scan (correctness oracle): brute force over the
+    /// merged live view, prefix-dim queries allowed (Matryoshka),
+    /// metrics Dot/Cosine/L2. Cosine zero-norm query is a schema
+    /// error; a zero-norm stored record is unscorable and excluded.
     pub fn exact_top_k(&self, metric: Metric, query: &[f32], k: usize) -> EngineResult<Vec<Hit>> {
         if query.is_empty() {
             return Err(EngineError::Schema("empty query vector".into()));
@@ -360,7 +394,7 @@ impl Store {
         }
         let mut hits: Vec<Hit> = Vec::new();
         for (id, seq, r) in self.merged_live() {
-            match score(metric, query, &r.vector) {
+            match crate::index::score(metric, query, &r.vector) {
                 Ok(s) => hits.push(Hit {
                     external_id: id,
                     score: s,
@@ -440,12 +474,19 @@ impl Store {
 
         // Swap in the sealed view and reset L0.
         let new_seg = SegmentReader::open(&self.dir, &name)?;
+        let new_index = ExactIndex::build(
+            new_seg
+                .entries()
+                .iter()
+                .map(|e| IndexedVector::new(e.record.external_id, e.seq, e.record.vector.clone())),
+        );
         self.seg_live = new_seg
             .entries()
             .iter()
             .map(|e| (e.record.external_id, e.seq))
             .collect();
         self.segments = vec![new_seg];
+        self.seg_indexes = vec![new_index];
         self.checkpoint_seq = committed;
         self.l0 = L0::default();
 
@@ -470,6 +511,50 @@ mod tests {
 
     fn rec(id: u64, x: f32) -> Record {
         Record::new(id, vec![x, x * 0.5])
+    }
+
+    #[test]
+    fn search_matches_exact_oracle_across_boundaries() {
+        let dir = tmp_dir("searchequiv");
+        let mut s = Store::open(&dir).unwrap().0;
+        // segment tier + L0 tier, overlapping score ranges
+        for i in 0..20u64 {
+            s.upsert(Record::new(i, vec![i as f32 * 0.05, 1.0 - i as f32 * 0.05]))
+                .unwrap();
+        }
+        s.commit().unwrap();
+        s.checkpoint().unwrap(); // all 20 sealed + indexed
+        for i in 20..35u64 {
+            s.upsert(Record::new(i, vec![i as f32 * 0.05, 1.0 - i as f32 * 0.05]))
+                .unwrap();
+        }
+        s.commit().unwrap(); // 15 fresh in L0
+        for k in [1usize, 3, 7, 15] {
+            let merged = s.search(Metric::Dot, &[1.0, 0.0], k, k).unwrap();
+            let oracle = s.exact_top_k(Metric::Dot, &[1.0, 0.0], k).unwrap();
+            let m: Vec<(u64, f32)> = merged.iter().map(|h| (h.external_id, h.score)).collect();
+            let o: Vec<(u64, f32)> = oracle.iter().map(|h| (h.external_id, h.score)).collect();
+            assert_eq!(m, o, "k={k}");
+        }
+        // cosine too
+        let merged = s.search(Metric::Cosine, &[1.0, 0.0], 5, 5).unwrap();
+        let oracle = s.exact_top_k(Metric::Cosine, &[1.0, 0.0], 5).unwrap();
+        assert_eq!(
+            merged.iter().map(|h| h.external_id).collect::<Vec<_>>(),
+            oracle.iter().map(|h| h.external_id).collect::<Vec<_>>()
+        );
+    }
+
+    #[test]
+    fn search_pool_smaller_than_k_rejected() {
+        let dir = tmp_dir("poolcheck");
+        let mut s = Store::open(&dir).unwrap().0;
+        s.upsert(rec(1, 0.1)).unwrap();
+        s.commit().unwrap();
+        assert!(matches!(
+            s.search(Metric::Dot, &[1.0, 1.0], 5, 3),
+            Err(EngineError::Schema(_))
+        ));
     }
 
     #[test]
