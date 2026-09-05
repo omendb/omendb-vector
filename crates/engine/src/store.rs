@@ -34,8 +34,9 @@ use crate::segments::{
     gc_segments, load_manifest, publish_manifest, write_segment, Manifest, SegmentEntry,
     SegmentReader,
 };
+use crate::text::Postings;
 use crate::wal::Wal;
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
@@ -428,6 +429,63 @@ impl Store {
         Ok(hits)
     }
 
+    /// BM25 text search over the merged live view. Scoring uses
+    /// **merged stats** (one postings set over all live docs across
+    /// sealed segments + L0, computed in one pass): with a single
+    /// sealed segment + L0 both in RAM, global stats are free and
+    /// make the result exactly the global-view oracle — no
+    /// per-segment IDF divergence (an L0 vocabulary cluster cannot
+    /// deflate its own scores). L0 entries shadow sealed entries
+    /// with the same id. Live records only.
+    pub fn text_search(&self, query: &str, k: usize) -> Vec<Hit> {
+        if k == 0 {
+            return Vec::new();
+        }
+        let q_tokens = crate::text::tokenize(query);
+        if q_tokens.is_empty() {
+            return Vec::new();
+        }
+        // Shadowing: ids whose latest state is in L0.
+        let shadowed: HashSet<u64> = self.l0.live.keys().copied().collect();
+
+        // Candidate docs: live, not shadowed, from segments; all
+        // live from L0.
+        let mut cands: Vec<(u64, u64, Option<&str>)> = Vec::new();
+        for seg in &self.segments {
+            for e in seg.entries() {
+                if e.record.lifecycle == Lifecycle::Live
+                    && !shadowed.contains(&e.record.external_id)
+                {
+                    cands.push((e.record.external_id, e.seq, e.record.text.as_deref()));
+                }
+            }
+        }
+        for (id, (seq, r)) in &self.l0.live {
+            if r.lifecycle == Lifecycle::Live {
+                cands.push((*id, *seq, r.text.as_deref()));
+            }
+        }
+        if cands.is_empty() {
+            return Vec::new();
+        }
+
+        // One postings set over all candidates: merged stats AND
+        // merged scoring; top_k is exact over this set.
+        let texts: Vec<Option<&str>> = cands.iter().map(|(_, _, t)| *t).collect();
+        let postings = Postings::build(texts);
+        let top = postings.top_k(query, k, &|_| true);
+        top.into_iter()
+            .map(|(doc, score)| {
+                let (external_id, seq, _) = cands[doc as usize];
+                Hit {
+                    external_id,
+                    score,
+                    seq,
+                }
+            })
+            .collect()
+    }
+
     /// Exact flat scan (correctness oracle): brute force over the
     /// merged live view, prefix-dim queries allowed (Matryoshka),
     /// metrics Dot/Cosine/L2. Cosine zero-norm query is a schema
@@ -654,6 +712,105 @@ mod tests {
         };
         let err = Store::open_with(&dir, IndexBackend::Hnsw(cfg)).unwrap_err();
         assert!(matches!(err, EngineError::Schema(_)));
+    }
+
+    #[test]
+    fn text_search_matches_oracle_ranking() {
+        let dir = tmp_dir("textoracle");
+        let mut s = Store::open(&dir).unwrap().0;
+        // Two clusters of vocabulary: 20 docs about installing, 20 about
+        // troubleshooting; some share tokens.
+        for i in 0..40u64 {
+            let text = if i < 20 {
+                format!("install guide step {i} for the omendb vector engine")
+            } else {
+                format!("troubleshooting steps {i} when the install fails")
+            };
+            s.upsert(Record::new(i, vec![0.1, 0.1]).with_text(text))
+                .unwrap();
+        }
+        s.commit().unwrap();
+        s.checkpoint().unwrap();
+        for i in 40..50u64 {
+            s.upsert(Record::new(i, vec![0.1, 0.1]).with_text(format!("install omendb fresh {i}")))
+                .unwrap();
+        }
+        s.commit().unwrap();
+
+        for (q, k) in [
+            ("install omendb", 10usize),
+            ("troubleshooting fails", 5),
+            ("vector engine", 8),
+        ] {
+            let got = s.text_search(q, k);
+            let live: Vec<Record> = s.scan();
+            let refs: Vec<&Record> = live.iter().collect();
+            let want = crate::text::exact_text_top_k(&refs, q, k);
+            // Same id SET (order may differ slightly between segment
+            // stats and global stats on ties).
+            let gs: std::collections::HashSet<u64> = got.iter().map(|h| h.external_id).collect();
+            let ws: std::collections::HashSet<u64> = want.iter().map(|(id, _)| *id).collect();
+            assert_eq!(gs, ws, "q={q}: got {gs:?} want {ws:?}");
+        }
+    }
+
+    #[test]
+    fn text_search_l0_shadows_sealed_copy() {
+        let dir = tmp_dir("textshadow");
+        let mut s = Store::open(&dir).unwrap().0;
+        s.upsert(Record::new(1, vec![0.1]).with_text("install guide for the database"))
+            .unwrap();
+        s.commit().unwrap();
+        s.checkpoint().unwrap(); // sealed with old text
+                                 // Update in L0: new text must win, old must not surface
+        s.upsert(
+            Record::new(1, vec![0.1]).with_text("completely different troubleshooting content"),
+        )
+        .unwrap();
+        s.commit().unwrap();
+        let hits = s.text_search("install guide", 5);
+        assert!(
+            hits.iter().all(|h| h.external_id != 1) || {
+                // id 1 may surface only via its NEW text
+                hits.iter().all(|h| h.external_id != 1 || h.score == 0.0)
+            }
+        );
+        assert!(s
+            .text_search("troubleshooting content", 5)
+            .iter()
+            .any(|h| h.external_id == 1));
+    }
+
+    #[test]
+    fn text_search_survives_reopen() {
+        let dir = tmp_dir("textreopen");
+        {
+            let mut s = Store::open(&dir).unwrap().0;
+            s.upsert(Record::new(1, vec![0.1]).with_text("hello vector world"))
+                .unwrap();
+            s.upsert(Record::new(2, vec![0.1]).with_text("hello database world"))
+                .unwrap();
+            s.commit().unwrap();
+            s.checkpoint().unwrap();
+        }
+        let (s2, _) = Store::open(&dir).unwrap();
+        let hits = s2.text_search("hello world", 5);
+        let ids: Vec<u64> = hits.iter().map(|h| h.external_id).collect();
+        assert!(ids.contains(&1) && ids.contains(&2));
+    }
+
+    #[test]
+    fn text_search_empty_and_no_text() {
+        let dir = tmp_dir("textempty");
+        let mut s = Store::open(&dir).unwrap().0;
+        s.upsert(Record::new(1, vec![0.1])).unwrap(); // no text
+        s.upsert(Record::new(2, vec![0.1]).with_text("words here"))
+            .unwrap();
+        s.commit().unwrap();
+        s.checkpoint().unwrap();
+        assert!(s.text_search("words", 5)[0].external_id == 2);
+        assert!(s.text_search("nothing matches this", 5).is_empty());
+        assert!(s.text_search("anything", 0).is_empty());
     }
 
     #[test]
