@@ -15,9 +15,11 @@
 //! back to inline exact scan (correct, slower), never a panic.
 
 pub mod exact;
+pub mod hnsw;
 pub mod recall;
 
 pub use exact::ExactIndex;
+pub use hnsw::{HnswConfig, HnswIndex};
 pub use recall::{oracle_of, recall_at_k, RecallReport};
 
 use crate::error::{EngineError, EngineResult};
