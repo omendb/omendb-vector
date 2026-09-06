@@ -10,6 +10,8 @@
 //! (indexes, text postings) is generation-bound, checksummed, and
 //! rebuildable from records.
 
+pub mod bench;
+
 pub mod error;
 
 pub mod filter;
