@@ -10,3 +10,6 @@ dist/
 
 # Local reference copy of the archived Mojo engine (v0.1.0a1-mojo tag / legacy/mojo-engine branch)
 legacy/
+
+# benchmark data: never commit (large, fetchable)
+bench/data/
