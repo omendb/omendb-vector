@@ -22,7 +22,27 @@
 use super::{score, validate_query, Hit, IndexedVector, Metric, VectorIndex};
 use crate::error::{EngineError, EngineResult};
 use std::cmp::Reverse;
-use std::collections::{BinaryHeap, HashSet};
+use std::collections::BinaryHeap;
+
+/// Distance key with total order (distances are non-negative finite;
+/// NaN cannot occur on this path — build validates finite vectors,
+/// and zero-norm cosine maps to the constant 2.0).
+#[derive(Debug, Clone, Copy, PartialEq)]
+struct DKey(f32);
+
+impl Eq for DKey {}
+impl PartialOrd for DKey {
+    fn partial_cmp(&self, other: &Self) -> Option<std::cmp::Ordering> {
+        Some(self.cmp(other))
+    }
+}
+impl Ord for DKey {
+    fn cmp(&self, other: &Self) -> std::cmp::Ordering {
+        self.0
+            .partial_cmp(&other.0)
+            .unwrap_or(std::cmp::Ordering::Equal)
+    }
+}
 
 /// HNSW build configuration.
 #[derive(Debug, Clone)]
@@ -59,24 +79,32 @@ impl Default for HnswConfig {
 
 /// Distance in the graph's space. Both terms are non-negative so f32
 /// comparisons are total (vectors are validated finite at build).
-fn dist(metric: Metric, q: &[f32], v: &[f32]) -> f32 {
+/// `qn` is the precomputed query norm (cosine); callers hoist it out
+/// of the inner loop.
+fn dist_with(metric: Metric, qn: f32, q: &[f32], v: &[f32]) -> f32 {
     match metric {
-        Metric::L2 => {
-            let d: f32 = q.iter().zip(v).map(|(a, b)| (a - b) * (a - b)).sum();
-            d
-        }
+        Metric::L2 => q.iter().zip(v).map(|(a, b)| (a - b) * (a - b)).sum(),
         Metric::Cosine => {
-            let qn = crate::records::l2_norm(q);
+            if qn == 0.0 {
+                return 2.0; // query has no direction: maximally far
+            }
             let vn = crate::records::l2_norm(v);
-            if qn == 0.0 || vn == 0.0 {
-                // No direction: treat as maximally far; such records
-                // are excluded from cosine results by the caller's
-                // score mapping anyway (score() errs on zero norm).
-                return 2.0;
+            if vn == 0.0 {
+                return 2.0; // no direction: maximally far
             }
             let dot: f32 = q.iter().zip(v).map(|(a, b)| a * b).sum();
             1.0 - dot / (qn * vn)
         }
+        Metric::Dot => unreachable!("dot graphs are rejected at build"),
+    }
+}
+
+/// Legacy signature used by build-time paths (norm computed per call —
+/// build is not the hot path).
+fn dist(metric: Metric, q: &[f32], v: &[f32]) -> f32 {
+    match metric {
+        Metric::L2 => q.iter().zip(v).map(|(a, b)| (a - b) * (a - b)).sum(),
+        Metric::Cosine => dist_with(metric, crate::records::l2_norm(q), q, v),
         Metric::Dot => unreachable!("dot graphs are rejected at build"),
     }
 }
@@ -255,7 +283,8 @@ impl HnswIndex {
     }
 
     /// Algorithm 2: beam search at layer `lc`. Returns (distance, node)
-    /// sorted nearest-first, at most `ef` entries.
+    /// sorted nearest-first, at most `ef` entries. Bitset visited,
+    /// reference iteration, hoisted query norm — the hot path.
     fn search_layer(
         &self,
         metric: Metric,
@@ -264,36 +293,53 @@ impl HnswIndex {
         ef: usize,
         lc: u8,
     ) -> Vec<(f32, u32)> {
-        let mut visited: HashSet<u32> = eps.iter().copied().collect();
-        let mut candidates: BinaryHeap<Reverse<(u64, u32)>> = BinaryHeap::new();
-        let mut results: BinaryHeap<(u64, u32)> = BinaryHeap::new();
-        let key = |d: f32| d.to_bits() as u64; // non-negative => monotonic
+        let n = self.vectors.len();
+        let words = n.div_ceil(64);
+        let mut visited = vec![0u64; words];
+        let qn = crate::records::l2_norm(q);
+        let mut candidates: BinaryHeap<Reverse<(DKey, u32)>> = BinaryHeap::new();
+        let mut results: BinaryHeap<(DKey, u32)> = BinaryHeap::new();
+
+        let seen = |node: u32, visited: &mut [u64]| -> bool {
+            let w = &mut visited[(node >> 6) as usize];
+            let bit = 1u64 << (node & 63);
+            if *w & bit != 0 {
+                true
+            } else {
+                *w |= bit;
+                false
+            }
+        };
 
         for &ep in eps {
-            let d = dist(metric, q, self.vec_of(ep));
-            candidates.push(Reverse((key(d), ep)));
-            results.push((key(d), ep));
+            if seen(ep, &mut visited) {
+                continue;
+            }
+            let d = dist_with(metric, qn, q, self.vec_of(ep));
+            candidates.push(Reverse((DKey(d), ep)));
+            results.push((DKey(d), ep));
         }
         while let Some(Reverse((cd, c))) = candidates.pop() {
-            if let Some(&(fd, _)) = results.peek() {
-                if results.len() >= ef && cd > fd {
-                    break;
+            if results.len() >= ef {
+                if let Some(&(fd, _)) = results.peek() {
+                    if cd.0 > fd.0 {
+                        break;
+                    }
                 }
             }
-            for &nb in &self.links[c as usize][lc as usize].clone() {
-                if !visited.insert(nb) {
+            for &nb in &self.links[c as usize][lc as usize] {
+                if seen(nb, &mut visited) {
                     continue;
                 }
-                let d = dist(metric, q, self.vec_of(nb));
-                let kd = key(d);
+                let d = dist_with(metric, qn, q, self.vec_of(nb));
                 let full = results.len() >= ef;
                 let better = match results.peek() {
-                    Some(&(fd, _)) => kd < fd,
+                    Some(&(fd, _)) => d < fd.0,
                     None => true,
                 };
                 if !full || better {
-                    candidates.push(Reverse((kd, nb)));
-                    results.push((kd, nb));
+                    candidates.push(Reverse((DKey(d), nb)));
+                    results.push((DKey(d), nb));
                     if results.len() > ef {
                         results.pop();
                     }
@@ -303,7 +349,7 @@ impl HnswIndex {
         let mut out: Vec<(f32, u32)> = results
             .into_sorted_vec()
             .into_iter()
-            .map(|(k, n)| (f32::from_bits(k as u32), n))
+            .map(|(k, n)| (k.0, n))
             .collect();
         out.sort_by(|a, b| a.0.partial_cmp(&b.0).unwrap());
         out
