@@ -61,8 +61,15 @@ pub fn bench_single_query(
         s.upsert(r.clone()).expect("upsert");
     }
     s.commit().expect("commit");
-    // Latency on the un-checkpointed (L0 exact) path and the
-    // checkpointed (backend path), timed separately.
+    // Warmup: JIT-free but cache/JIT-of-nothing still matters — page in
+    // the graph/segment, prime allocator, spin up turbo. Untimed.
+    for q in queries.iter().take(queries.len().min(20)) {
+        let _ = s.exact_top_k(metric, q, k).expect("warmup query");
+    }
+    // Multi-pass: run the full query set REPEAT times so percentiles
+    // and the mean carry real variance (single-pass means proved
+    // noisy: 497-808us run-to-run on the same machine).
+    const PASSES: usize = 3;
     let mut t_l0 = Timing::new();
     for q in queries {
         t_l0.time(|| {
@@ -71,14 +78,19 @@ pub fn bench_single_query(
     }
     s.checkpoint().expect("checkpoint");
     let mut t_seg = Timing::new();
-    for q in queries {
-        t_seg.time(|| {
-            s.search(metric, q, k, k).expect("query");
-        });
+    for _ in 0..PASSES {
+        for q in queries {
+            t_seg.time(|| {
+                s.search(metric, q, k, k).expect("query");
+            });
+        }
     }
-    // Recall vs oracle over the same queries (backend path).
+    // Recall vs oracle on a bounded query subset (the oracle is
+    // O(n) per query; 200 queries give a tight estimate without
+    // minutes of brute force).
+    let recall_queries = &queries[..queries.len().min(200)];
     let mut recall_sum = 0.0f64;
-    for q in queries {
+    for q in recall_queries {
         let got = s.search(metric, q, k, k).expect("query");
         let want = s.exact_top_k(metric, q, k).expect("oracle");
         let want_ids: std::collections::HashSet<u64> = want.iter().map(|h| h.external_id).collect();
@@ -88,7 +100,7 @@ pub fn bench_single_query(
             .count();
         recall_sum += overlap as f64 / k.min(want.len()).max(1) as f64;
     }
-    let recall = recall_sum / queries.len() as f64;
+    let recall = recall_sum / recall_queries.len() as f64;
     vec![
         BenchRecord::from_timing(
             "single_query_l0_exact",
@@ -126,11 +138,20 @@ pub fn bench_batch_query(
     }
     s.commit().expect("commit");
     s.checkpoint().expect("checkpoint");
+    // Warmup + multi-pass batch: single-pass batch numbers proved
+    // noisy (455-525ms on identical config); PASSES batches amortize
+    // the per-run variance into a mean.
+    for q in queries.iter().take(queries.len().min(20)) {
+        let _ = s.search(metric, q, k, k).expect("warmup query");
+    }
     let mut t = Timing::new();
     let mut all_hits = 0usize;
+    const PASSES: usize = 3;
     t.time(|| {
-        for q in queries {
-            all_hits += s.search(metric, q, k, k).expect("query").len();
+        for _ in 0..PASSES {
+            for q in queries {
+                all_hits += s.search(metric, q, k, k).expect("query").len();
+            }
         }
     });
     assert!(all_hits > 0);
@@ -142,7 +163,7 @@ pub fn bench_batch_query(
         &t,
         None,
     );
-    rec.ops_per_sec = queries.len() as f64 / t.mean().as_secs_f64().max(1e-9);
+    rec.ops_per_sec = queries.len() as f64 * PASSES as f64 / t.mean().as_secs_f64().max(1e-9);
     rec
 }
 

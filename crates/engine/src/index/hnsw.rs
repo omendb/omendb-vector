@@ -81,9 +81,22 @@ impl Default for HnswConfig {
 /// comparisons are total (vectors are validated finite at build).
 /// `qn` is the precomputed query norm (cosine); callers hoist it out
 /// of the inner loop.
+///
+/// Deliberately iterator-sum: a 4x manual unroll measurably REGRESSED
+/// the floor (build 474ms -> 1871ms: unrolled chains blocked LLVM's
+/// auto-vectorization of the zip at ef_construction beam widths).
+/// Revert evidence in bench/results/ and sprint logs — do not hand-
+/// unroll without remeasuring.
 fn dist_with(metric: Metric, qn: f32, q: &[f32], v: &[f32]) -> f32 {
     match metric {
-        Metric::L2 => q.iter().zip(v).map(|(a, b)| (a - b) * (a - b)).sum(),
+        Metric::L2 => {
+            let dim = q.len().min(v.len());
+            q[..dim]
+                .iter()
+                .zip(&v[..dim])
+                .map(|(a, b)| (a - b) * (a - b))
+                .sum()
+        }
         Metric::Cosine => {
             if qn == 0.0 {
                 return 2.0; // query has no direction: maximally far
