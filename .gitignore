@@ -13,3 +13,8 @@ legacy/
 
 # benchmark data: never commit (large, fetchable)
 bench/data/
+
+# python binding build artifacts
+*.so
+crates/python/target/
+crates/python/python/omendb_vector/*.so

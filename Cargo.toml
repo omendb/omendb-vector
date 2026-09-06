@@ -1,6 +1,7 @@
 [workspace]
 resolver = "2"
 members = ["crates/engine"]
+exclude = ["crates/python"]  # maturin-built binding crate; own toolchain gates
 
 [workspace.package]
 version = "0.1.0-alpha.1"

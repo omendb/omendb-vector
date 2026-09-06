@@ -1,0 +1,15 @@
+[build-system]
+requires = ["maturin>=1.5,<2"]
+build-backend = "maturin"
+
+[project]
+name = "omendb-vector"
+version = "0.1.0-alpha.1"
+description = "OmenDB Vector: embedded local-first retrieval engine (dense + BM25 + hybrid RRF)"
+requires-python = ">=3.9"
+license = { text = "AGPL-3.0-only" }
+
+[tool.maturin]
+python-source = "python"
+module-name = "omendb_vector._omendb_vector"
+features = ["pyo3/extension-module"]

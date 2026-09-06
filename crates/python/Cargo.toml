@@ -1,0 +1,15 @@
+[package]
+name = "omendb-vector-python"
+description = "OmenDB Vector Python bindings"
+version = "0.1.0-alpha.1"
+edition = "2021"
+license = "AGPL-3.0-only"
+
+[lib]
+name = "omendb_vector"
+crate-type = ["cdylib", "rlib"]
+
+[dependencies]
+omendb-vector-engine = { path = "../engine" }
+pyo3 = { version = "0.29", features = ["macros"] }
+
