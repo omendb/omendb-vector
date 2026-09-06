@@ -7,11 +7,13 @@
 //! recall-gate rule.
 
 pub mod scenarios;
+pub mod sift;
 pub mod synth;
 pub mod util;
 
 pub use scenarios::{
     bench_batch_query, bench_build, bench_checkpoint_reopen, bench_single_query, synth_smoke,
 };
+pub use sift::load;
 pub use synth::{clustered, queries_from, uniform, SynthRng};
 pub use util::{environment_string, BenchRecord, Timing};

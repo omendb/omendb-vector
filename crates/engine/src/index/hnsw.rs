@@ -37,6 +37,11 @@ pub struct HnswConfig {
     pub metric: Metric,
     /// RNG seed for level assignment (deterministic rebuilds).
     pub seed: u64,
+    /// Default ef for searches that do not specify one. The SIFT-100K
+    /// floor showed max(4k,32) (k=window=10 -> ef=40) at recall@10
+    /// 0.9805; ef=200 reaches 0.9995. The default stays conservative
+    /// (recall-leaning) at max(4k, 200).
+    pub ef_search_default: usize,
 }
 
 impl Default for HnswConfig {
@@ -47,6 +52,7 @@ impl Default for HnswConfig {
             ef_construction: 192,
             metric: Metric::L2,
             seed: 0x5EED_5EED,
+            ef_search_default: 200,
         }
     }
 }
@@ -390,7 +396,7 @@ impl VectorIndex for HnswIndex {
         if metric != self.config.metric || k >= n || n <= 100 {
             return self.exact_scan(metric, query, k);
         }
-        let ef = (k * 4).max(32);
+        let ef = (k * 4).max(self.config.ef_search_default.max(32));
         let Some(entry) = self.entry else {
             return self.exact_scan(metric, query, k);
         };
