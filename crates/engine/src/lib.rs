@@ -12,6 +12,10 @@
 
 pub mod error;
 
+pub mod filter;
+
+pub mod planner;
+
 pub mod codec;
 
 pub mod fsutil;
@@ -29,6 +33,8 @@ pub mod text;
 pub mod wal;
 
 pub use error::{EngineError, EngineResult};
+pub use filter::{Filter, Num, Predicate};
 pub use index::{Hit, Metric, RecallReport};
+pub use planner::{rrf_fuse, RRF_K};
 pub use records::{l2_norm, Lifecycle, MetaValue, Record};
 pub use store::{Store, StoreRecovery};

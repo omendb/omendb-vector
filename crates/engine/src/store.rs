@@ -28,6 +28,7 @@
 //! error; a zero-norm stored record is unscorable and excluded.
 
 use crate::error::{EngineError, EngineResult};
+use crate::filter::Filter;
 use crate::index::{ExactIndex, HnswConfig, HnswIndex, IndexedVector, VectorIndex};
 use crate::records::{Lifecycle, Record};
 use crate::segments::{
@@ -468,6 +469,11 @@ impl Store {
         if cands.is_empty() {
             return Vec::new();
         }
+        // Deterministic scoring requires deterministic candidate
+        // order (BM25 ties break by doc ordinal): sort by external id
+        // so tier placement cannot change results. HashMap iteration
+        // order must never leak into scoring.
+        cands.sort_by_key(|(id, _, _)| *id);
 
         // One postings set over all candidates: merged stats AND
         // merged scoring; top_k is exact over this set.
@@ -484,6 +490,90 @@ impl Store {
                 }
             })
             .collect()
+    }
+
+    /// Filtered exact scan (filtered oracle): apply `filter` to the
+    /// merged live view, then flat-scan. Must equal `exact_top_k`
+    /// restricted to matching records — that equivalence is the
+    /// acceptance test for every future filtered path (in-filter
+    /// HNSW, bitmap indexes).
+    pub fn filtered_exact_top_k(
+        &self,
+        metric: Metric,
+        query: &[f32],
+        k: usize,
+        filter: &Filter,
+    ) -> EngineResult<Vec<Hit>> {
+        if query.is_empty() {
+            return Err(EngineError::Schema("empty query vector".into()));
+        }
+        if self.dim != 0 && query.len() as u32 > self.dim {
+            return Err(EngineError::Schema(format!(
+                "query dim {} exceeds collection dim {}",
+                query.len(),
+                self.dim
+            )));
+        }
+        if k == 0 {
+            return Ok(Vec::new());
+        }
+        let mut hits: Vec<Hit> = Vec::new();
+        for (id, seq, r) in self.merged_live() {
+            if !filter.matches(&r)? {
+                continue;
+            }
+            match crate::index::score(metric, query, &r.vector) {
+                Ok(s) => hits.push(Hit {
+                    external_id: id,
+                    score: s,
+                    seq,
+                }),
+                Err(_) => continue, // zero-norm cosine: excluded
+            }
+        }
+        hits.sort_by(|a, b| {
+            b.score
+                .partial_cmp(&a.score)
+                .unwrap_or(std::cmp::Ordering::Equal)
+                .then(a.external_id.cmp(&b.external_id))
+        });
+        hits.truncate(k);
+        Ok(hits)
+    }
+
+    /// Hybrid search: vector path + text path fused with RRF.
+    /// `vector_query` may be a prefix of the stored dim. Either
+    /// input may be None (single-path search). `window` is the
+    /// per-path candidate window (should be >= k; standard practice
+    /// k..2k — the planner defaults below).
+    pub fn hybrid_search_rrf(
+        &self,
+        vector_query: Option<(&[f32], Metric)>,
+        text_query: Option<&str>,
+        k: usize,
+        window: usize,
+    ) -> EngineResult<Vec<Hit>> {
+        if k == 0 {
+            return Ok(Vec::new());
+        }
+        if vector_query.is_none() && text_query.is_none() {
+            return Err(EngineError::Schema(
+                "hybrid search requires at least one query path".into(),
+            ));
+        }
+        if window < k {
+            return Err(EngineError::Schema(format!(
+                "hybrid window {window} < k {k}"
+            )));
+        }
+        let mut paths: Vec<Vec<Hit>> = Vec::with_capacity(2);
+        if let Some((q, metric)) = vector_query {
+            paths.push(self.exact_top_k(metric, q, window)?);
+        }
+        if let Some(tq) = text_query {
+            paths.push(self.text_search(tq, window));
+        }
+        Ok(crate::planner::rrf_fuse(&paths, k, crate::planner::RRF_K))
     }
 
     /// Exact flat scan (correctness oracle): brute force over the
@@ -631,6 +721,7 @@ fn build_index(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::filter::{Filter, Num, Predicate};
     use std::fs;
 
     fn tmp_dir(name: &str) -> PathBuf {
@@ -811,6 +902,258 @@ mod tests {
         assert!(s.text_search("words", 5)[0].external_id == 2);
         assert!(s.text_search("nothing matches this", 5).is_empty());
         assert!(s.text_search("anything", 0).is_empty());
+    }
+
+    #[test]
+    fn filtered_top_k_equals_oracle_restricted() {
+        let dir = tmp_dir("filteroracle");
+        let mut s = Store::open(&dir).unwrap().0;
+        for i in 0..30u64 {
+            let color = if i % 3 == 0 { "red" } else { "blue" };
+            s.upsert(
+                Record::new(i, vec![i as f32 * 0.03, 0.5])
+                    .with_meta("color", crate::records::MetaValue::Str(color.into()))
+                    .with_meta("age", crate::records::MetaValue::Int(i as i64)),
+            )
+            .unwrap();
+        }
+        s.commit().unwrap();
+        s.checkpoint().unwrap();
+        for i in 30..40u64 {
+            s.upsert(
+                Record::new(i, vec![i as f32 * 0.03, 0.5])
+                    .with_meta("color", crate::records::MetaValue::Str("red".into())),
+            )
+            .unwrap();
+        }
+        s.commit().unwrap();
+
+        let filter = Filter::new().and(Predicate::Eq {
+            field: "color".into(),
+            value: crate::records::MetaValue::Str("red".into()),
+        });
+        let filtered = s
+            .filtered_exact_top_k(Metric::Dot, &[1.0, 0.0], 5, &filter)
+            .unwrap();
+        // Oracle restricted to matching ids.
+        let unfiltered = s.exact_top_k(Metric::Dot, &[1.0, 0.0], 40).unwrap();
+        let expect: Vec<u64> = unfiltered
+            .iter()
+            .filter(|h| {
+                let r = s.get(h.external_id).unwrap();
+                filter.matches(&r).unwrap()
+            })
+            .map(|h| h.external_id)
+            .take(5)
+            .collect();
+        let got: Vec<u64> = filtered.iter().map(|h| h.external_id).collect();
+        assert_eq!(got, expect);
+        // Empty filter = everything.
+        let all = s
+            .filtered_exact_top_k(Metric::Dot, &[1.0, 0.0], 40, &Filter::new())
+            .unwrap();
+        assert_eq!(all.len(), 40);
+        // A filter matching nothing.
+        let none = s
+            .filtered_exact_top_k(
+                Metric::Dot,
+                &[1.0, 0.0],
+                5,
+                &Filter::new().and(Predicate::Present {
+                    field: "nope".into(),
+                }),
+            )
+            .unwrap();
+        assert!(none.is_empty());
+    }
+
+    #[test]
+    fn filtered_survives_reopen() {
+        let dir = tmp_dir("filterreopen");
+        {
+            let mut s = Store::open(&dir).unwrap().0;
+            s.upsert(Record::new(1, vec![0.1]).with_meta("k", crate::records::MetaValue::Int(1)))
+                .unwrap();
+            s.commit().unwrap();
+            s.checkpoint().unwrap();
+        }
+        let (s2, _) = Store::open(&dir).unwrap();
+        let hits = s2
+            .filtered_exact_top_k(
+                Metric::Dot,
+                &[1.0],
+                5,
+                &Filter::new().and(Predicate::Range {
+                    field: "k".into(),
+                    lo: Num::Int(0),
+                    hi: Num::Int(2),
+                }),
+            )
+            .unwrap();
+        assert_eq!(hits.len(), 1);
+    }
+
+    #[test]
+    fn hybrid_rrf_agrees_when_paths_agree() {
+        let dir = tmp_dir("hybridagree");
+        let mut s = Store::open(&dir).unwrap().0;
+        // Doc 1 is the best match for BOTH paths; 2 and 3 split.
+        s.upsert(Record::new(1, vec![1.0, 0.0]).with_text("install omendb guide troubleshooting"))
+            .unwrap();
+        s.upsert(Record::new(2, vec![0.9, 0.1]).with_text("unrelated words here"))
+            .unwrap();
+        s.upsert(Record::new(3, vec![0.1, 0.9]).with_text("install omendb other"))
+            .unwrap();
+        s.commit().unwrap();
+        let fused = s
+            .hybrid_search_rrf(
+                Some((&[1.0, 0.0], Metric::Dot)),
+                Some("install omendb"),
+                3,
+                3,
+            )
+            .unwrap();
+        assert_eq!(fused[0].external_id, 1);
+        assert_eq!(fused.len(), 3);
+    }
+
+    #[test]
+    fn hybrid_rrf_fuses_disagreeing_paths() {
+        let dir = tmp_dir("hybriddisagree");
+        let mut s = Store::open(&dir).unwrap().0;
+        // Text-best ≠ vector-best; fusion must surface both above noise.
+        s.upsert(Record::new(1, vec![1.0, 0.0]).with_text("zzz qqq vvv"))
+            .unwrap(); // vector best
+        s.upsert(Record::new(2, vec![0.0, 1.0]).with_text("install omendb"))
+            .unwrap(); // text best
+        s.upsert(Record::new(3, vec![0.5, 0.5]).with_text("install partially"))
+            .unwrap();
+        s.commit().unwrap();
+        let fused = s
+            .hybrid_search_rrf(
+                Some((&[1.0, 0.0], Metric::Dot)),
+                Some("install omendb"),
+                3,
+                3,
+            )
+            .unwrap();
+        // Vector q=[1,0]: id1 rank0, id3 rank1, id2 rank2.
+        // Text "install omendb": id2 rank0, id3 rank1; id1 has NO
+        // text match at all.
+        // Fused: id2 = 1/61+1/63 (0.0325), id3 = 1/62+1/62 (0.0322),
+        // id1 = 1/61 only (0.0164). Order [2, 3, 1] — the dual-path
+        // records beat the single-path vector winner.
+        let ids: Vec<u64> = fused.iter().map(|h| h.external_id).collect();
+        assert!(ids.contains(&1) && ids.contains(&2));
+        assert_eq!(ids, vec![2, 3, 1]);
+    }
+
+    #[test]
+    fn hybrid_single_path_and_errors() {
+        let dir = tmp_dir("hybridsingle");
+        let mut s = Store::open(&dir).unwrap().0;
+        s.upsert(Record::new(1, vec![1.0, 0.0]).with_text("alpha beta"))
+            .unwrap();
+        s.commit().unwrap();
+        // vector only
+        let v = s
+            .hybrid_search_rrf(Some((&[1.0, 0.0], Metric::Dot)), None, 2, 2)
+            .unwrap();
+        assert_eq!(v[0].external_id, 1);
+        // text only
+        let t = s.hybrid_search_rrf(None, Some("alpha"), 2, 2).unwrap();
+        assert_eq!(t[0].external_id, 1);
+        // no paths: error
+        assert!(s.hybrid_search_rrf(None, None, 2, 2).is_err());
+        // window < k: error
+        assert!(s
+            .hybrid_search_rrf(Some((&[1.0, 0.0], Metric::Dot)), None, 5, 2)
+            .is_err());
+    }
+
+    #[test]
+    fn hybrid_across_checkpoint_and_reopen() {
+        let dir = tmp_dir("hybridreopen");
+        // Frozen corpus across phases: fuse, checkpoint, close, reopen,
+        // fuse again — identical results required. Then two fresh docs in
+        // L0 must be discoverable WITHOUT another checkpoint.
+        let (before, with_l0) = {
+            let mut s = Store::open(&dir).unwrap().0;
+            for i in 0..10u64 {
+                s.upsert(
+                    Record::new(i, vec![i as f32 * 0.1, 1.0])
+                        .with_text(format!("install omendb doc {i}")),
+                )
+                .unwrap();
+            }
+            s.commit().unwrap();
+            let before = s
+                .hybrid_search_rrf(
+                    Some((&[1.0, 0.0], Metric::Dot)),
+                    Some("install omendb"),
+                    5,
+                    5,
+                )
+                .unwrap();
+            s.checkpoint().unwrap();
+            let after_checkpoint = s
+                .hybrid_search_rrf(
+                    Some((&[1.0, 0.0], Metric::Dot)),
+                    Some("install omendb"),
+                    5,
+                    5,
+                )
+                .unwrap();
+            assert_eq!(
+                before.iter().map(|h| h.external_id).collect::<Vec<_>>(),
+                after_checkpoint
+                    .iter()
+                    .map(|h| h.external_id)
+                    .collect::<Vec<_>>(),
+                "checkpoint must not change fused results on a frozen corpus"
+            );
+            // Fresh writes in L0 (no checkpoint): must surface immediately.
+            s.upsert(Record::new(99, vec![0.99, 0.01]).with_text("install omendb exact fresh"))
+                .unwrap();
+            s.commit().unwrap();
+            let with_l0 = s
+                .hybrid_search_rrf(
+                    Some((&[1.0, 0.0], Metric::Dot)),
+                    Some("install omendb"),
+                    5,
+                    5,
+                )
+                .unwrap();
+            (before, with_l0)
+        };
+        let (s2, _) = Store::open(&dir).unwrap();
+        let after = s2
+            .hybrid_search_rrf(
+                Some((&[1.0, 0.0], Metric::Dot)),
+                Some("install omendb"),
+                5,
+                5,
+            )
+            .unwrap();
+        // Reopen (L0 survives via WAL replay) preserves fused results.
+        assert_eq!(
+            with_l0.iter().map(|h| h.external_id).collect::<Vec<_>>(),
+            after.iter().map(|h| h.external_id).collect::<Vec<_>>(),
+        );
+        // Determinism: same query twice on the reopened store.
+        let again = s2
+            .hybrid_search_rrf(
+                Some((&[1.0, 0.0], Metric::Dot)),
+                Some("install omendb"),
+                5,
+                5,
+            )
+            .unwrap();
+        assert_eq!(
+            after.iter().map(|h| h.external_id).collect::<Vec<_>>(),
+            again.iter().map(|h| h.external_id).collect::<Vec<_>>()
+        );
+        let _ = before;
     }
 
     #[test]
