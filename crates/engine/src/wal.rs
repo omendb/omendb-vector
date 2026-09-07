@@ -251,7 +251,11 @@ fn open_or_recover(path: &Path, sync_class: SyncClass) -> EngineResult<(File, Wa
         file.seek(SeekFrom::Start(0))?;
         file.write_all(&header_bytes(start_seq))?;
         sync_file_all(&file, sync_class)?;
-        fsync_dir(path.parent().unwrap_or(Path::new(".")))?;
+        fsync_dir(
+            path.parent()
+                .filter(|p| !p.as_os_str().is_empty())
+                .unwrap_or(Path::new(".")),
+        )?;
         return Ok((
             file,
             WalRecovery {
