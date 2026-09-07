@@ -402,6 +402,25 @@ impl Store {
         Ok(seq)
     }
 
+    /// Rollback: discard everything appended since the last commit
+    /// (the in-process form of recovery's destructive-prefix rule).
+    /// Drops L0 entries above the committed seq and re-opens the WAL
+    /// from disk — recovery truncates the unacked tail to the last
+    /// commit barrier, so aborted records can never resurrect under
+    /// a later commit. Reads that raced unacked writes see them
+    /// vanish, which is the contract (unacked = never happened).
+    pub fn rollback(&mut self) -> EngineResult<()> {
+        let committed = self.wal.committed_seq();
+        self.l0.live.retain(|_, (seq, _)| *seq <= committed);
+        // Re-open the WAL from disk: recovery drops the unacked tail
+        // and repositions the append cursor at the barrier. (The
+        // class-threaded open_with_class lands with the durable-fs
+        // branch merge; the default class is today's behavior.)
+        let (wal, _recovery) = Wal::open(&self.wal.path())?;
+        self.wal = wal;
+        Ok(())
+    }
+
     /// Commit barrier + fsync. Everything appended is now durable.
     pub fn commit(&mut self) -> EngineResult<u64> {
         self.wal.commit()
@@ -534,35 +553,51 @@ impl Store {
     /// deflate its own scores). L0 entries shadow sealed entries
     /// with the same id. Live records only.
     pub fn text_search(&self, query: &str, k: usize) -> Vec<Hit> {
+        self.text_search_filtered(query, k, &Filter::new())
+            .expect("empty filter cannot error")
+    }
+
+    /// BM25 text search with a metadata filter (AND'd before
+    /// scoring: only matching records enter the postings set —
+    /// filtered stats are the exact oracle over the filtered view).
+    pub fn text_search_filtered(
+        &self,
+        query: &str,
+        k: usize,
+        filter: &Filter,
+    ) -> EngineResult<Vec<Hit>> {
         if k == 0 {
-            return Vec::new();
+            return Ok(Vec::new());
         }
         let q_tokens = crate::text::tokenize(query);
         if q_tokens.is_empty() {
-            return Vec::new();
+            return Ok(Vec::new());
         }
         // Shadowing: ids whose latest state is in L0.
         let shadowed: HashSet<&ExternalId> = self.l0.live.keys().collect();
 
         // Candidate docs: live, not shadowed, from segments; all
-        // live from L0.
+        // live from L0; each must satisfy the filter.
         let mut cands: Vec<(&ExternalId, u64, Option<&str>)> = Vec::new();
         for seg in &self.segments {
             for e in seg.entries() {
                 if e.record.lifecycle == Lifecycle::Live
                     && !shadowed.contains(&e.record.external_id)
                 {
+                    if !filter.matches(&e.record)? {
+                        continue;
+                    }
                     cands.push((&e.record.external_id, e.seq, e.record.text.as_deref()));
                 }
             }
         }
         for (id, (seq, r)) in &self.l0.live {
-            if r.lifecycle == Lifecycle::Live {
+            if r.lifecycle == Lifecycle::Live && filter.matches(r)? {
                 cands.push((id, *seq, r.text.as_deref()));
             }
         }
         if cands.is_empty() {
-            return Vec::new();
+            return Ok(Vec::new());
         }
         // Deterministic scoring requires deterministic candidate
         // order (BM25 ties break by doc ordinal): sort by external id
@@ -575,7 +610,8 @@ impl Store {
         let texts: Vec<Option<&str>> = cands.iter().map(|(_, _, t)| *t).collect();
         let postings = Postings::build(texts);
         let top = postings.top_k(query, k, &|_| true);
-        top.into_iter()
+        Ok(top
+            .into_iter()
             .map(|(doc, score)| {
                 let (external_id, seq, _) = &cands[doc as usize];
                 Hit {
@@ -584,7 +620,7 @@ impl Store {
                     seq: *seq,
                 }
             })
-            .collect()
+            .collect())
     }
 
     /// Filtered exact scan (filtered oracle): apply `filter` to the
@@ -662,6 +698,21 @@ impl Store {
         k: usize,
         window: usize,
     ) -> EngineResult<Vec<Hit>> {
+        self.hybrid_search_rrf_filtered(vector_query, text_query, k, window, &Filter::new())
+    }
+
+    /// Hybrid RRF with a metadata filter applied on BOTH paths (the
+    /// weakest-link guard: a filter binds the whole query, never one
+    /// leg — filtered candidates enter each path's window before
+    /// fusion).
+    pub fn hybrid_search_rrf_filtered(
+        &self,
+        vector_query: Option<(&[f32], Metric)>,
+        text_query: Option<&str>,
+        k: usize,
+        window: usize,
+        filter: &Filter,
+    ) -> EngineResult<Vec<Hit>> {
         if k == 0 {
             return Ok(Vec::new());
         }
@@ -677,10 +728,10 @@ impl Store {
         }
         let mut paths: Vec<Vec<Hit>> = Vec::with_capacity(2);
         if let Some((q, metric)) = vector_query {
-            paths.push(self.exact_top_k(metric, q, window)?);
+            paths.push(self.filtered_exact_top_k(metric, q, window, filter)?);
         }
         if let Some(tq) = text_query {
-            paths.push(self.text_search(tq, window));
+            paths.push(self.text_search_filtered(tq, window, filter)?);
         }
         Ok(crate::planner::rrf_fuse(&paths, k, crate::planner::RRF_K))
     }
@@ -1363,6 +1414,37 @@ mod tests {
         assert!(s.delete("other").is_err());
         s.delete(1).unwrap();
         assert_eq!(s.id_kind(), Some(IdKind::Int));
+    }
+
+    #[test]
+    fn rollback_discards_unacked_and_prevents_resurrection() {
+        let dir = tmp_dir("rollback");
+        let mut s = Store::open(&dir).unwrap().0;
+        s.upsert(rec(1, 0.1)).unwrap();
+        s.commit().unwrap(); // acked
+        s.upsert(rec(2, 0.2)).unwrap();
+        s.upsert(rec(3, 0.3)).unwrap(); // unacked
+        assert_eq!(s.len(), 3);
+
+        s.rollback().unwrap();
+        assert_eq!(s.len(), 1);
+        assert!(s.get(&ExternalId::Int(1)).is_some());
+        assert!(s.get(&ExternalId::Int(2)).is_none());
+        assert!(s.get(&ExternalId::Int(3)).is_none());
+
+        // Post-rollback writes continue from the barrier; the rolled-
+        // back records must not resurrect under the next commit (the
+        // anti-resurrection invariant, in-process).
+        s.upsert(rec(4, 0.4)).unwrap();
+        s.commit().unwrap();
+        assert_eq!(s.len(), 2);
+        assert!(s.get(&ExternalId::Int(2)).is_none());
+
+        // And across reopen: WAL on disk never held 2/3 durably.
+        let (s2, _) = Store::open(&dir).unwrap();
+        assert_eq!(s2.len(), 2);
+        assert!(s2.get(&ExternalId::Int(4)).is_some());
+        assert!(s2.get(&ExternalId::Int(2)).is_none());
     }
 
     #[test]
