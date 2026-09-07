@@ -86,6 +86,32 @@ impl L0 {
     }
 }
 
+/// Durability tier (API v2): strict = fsync per commit (never lose
+/// an acked write, even on power loss); normal = process-crash-safe
+/// with a power-crash window (sqlite `PRAGMA synchronous=NORMAL`
+/// in WAL mode). `Normal` maps to the durable-fs `KernelBarrier`
+/// class and lands with its adoption merge; until then connect
+/// with Normal fails loud rather than silently promising the weaker
+/// tier it cannot deliver.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum Safety {
+    #[default]
+    Strict,
+    Normal,
+}
+
+/// API v2 connection options (`Store::connect_with`).
+#[derive(Debug, Clone, Default)]
+pub struct ConnectOptions {
+    /// Collection metric; None locks at first use (first metric-ful
+    /// query or explicit set_metric).
+    pub metric: Option<Metric>,
+    /// Durability tier; Strict default.
+    pub safety: Safety,
+    /// Index backend for sealed segments; exact default.
+    pub backend: IndexBackend,
+}
+
 /// Open store: single writer, crash-safe, derived-artifact rebuild.
 pub struct Store {
     dir: PathBuf,
@@ -112,6 +138,12 @@ pub struct Store {
     checkpoint_seq: u64,
     generation: u64,
     l0: L0,
+    /// API v2 (connect): mutations commit before returning unless a
+    /// transaction guard is live. Mechanism surface (open) keeps
+    /// explicit commit().
+    autocommit: bool,
+    /// A Transaction guard is live: mutations defer to its commit.
+    in_tx: bool,
 }
 
 impl std::fmt::Debug for Store {
@@ -132,6 +164,31 @@ impl Store {
     /// no file locking in v0.
     pub fn open<P: AsRef<Path>>(dir: P) -> EngineResult<(Store, StoreRecovery)> {
         Self::open_with(dir, IndexBackend::default())
+    }
+
+    /// API v2 constructor: connect (or create) a store. Autocommit
+    /// default — every mutation commits before returning (never lose
+    /// an acked write under strict safety). Uniform across languages
+    /// (`omendb.connect` in Python, `Store::connect` here).
+    pub fn connect<P: AsRef<Path>>(dir: P) -> EngineResult<Store> {
+        Self::connect_with(dir, ConnectOptions::default())
+    }
+
+    /// Connect with explicit options. `safety = Normal` fails loud
+    /// until the durable-fs adoption merge (the class threading is
+    /// its mechanism); metric locks the collection when given.
+    pub fn connect_with<P: AsRef<Path>>(dir: P, opts: ConnectOptions) -> EngineResult<Store> {
+        if opts.safety == Safety::Normal {
+            return Err(EngineError::Schema(
+                "safety=normal lands with the durable-fs adoption merge; use strict".into(),
+            ));
+        }
+        let (mut store, _recovery) = Self::open_with(dir, opts.backend)?;
+        store.autocommit = true;
+        if let Some(m) = opts.metric {
+            store.set_metric(m)?;
+        }
+        Ok(store)
     }
 
     /// Open with an explicit index backend for sealed segments.
@@ -254,6 +311,8 @@ impl Store {
             checkpoint_seq,
             generation: manifest_gen.unwrap_or(0),
             l0: L0::default(),
+            autocommit: false,
+            in_tx: false,
         };
 
         // WAL replay: records above checkpoint_seq are L0; older ones
@@ -360,6 +419,26 @@ impl Store {
         }
     }
 
+    /// The one write verb (API v2): columnar batch, n>=1, keyed
+    /// last-wins (INSERT OR REPLACE, not append). Whole records:
+    /// omitted fields are not preserved. Returns the seq of the
+    /// last record. Under connect (autocommit) each add is durable
+    /// before returning; under open or a live transaction guard,
+    /// durability defers to commit.
+    pub fn add(&mut self, records: Vec<Record>) -> EngineResult<u64> {
+        if records.is_empty() {
+            return Err(EngineError::Schema(
+                "add requires at least one record".into(),
+            ));
+        }
+        let mut last = 0;
+        for record in records {
+            last = self.upsert(record)?;
+        }
+        self.maybe_autocommit()?;
+        Ok(last)
+    }
+
     /// Append an upsert (live record). Not durable until `commit`.
     /// The first upsert fixes the collection dim and id kind;
     /// later writes of the other kind are a schema error (no
@@ -382,6 +461,7 @@ impl Store {
         }
         let seq = self.wal.append(&record)?;
         self.l0.apply(seq, record);
+        self.maybe_autocommit()?;
         Ok(seq)
     }
 
@@ -399,7 +479,22 @@ impl Store {
         tomb.lifecycle = Lifecycle::Tombstone;
         let seq = self.wal.append(&tomb)?;
         self.l0.apply(seq, tomb);
+        self.maybe_autocommit()?;
         Ok(seq)
+    }
+
+    /// Begin an explicit transaction: mutations defer to the
+    /// guard's `commit` (or roll back on drop). Re-entrant begin
+    /// while a guard is live is a schema error (nested transactions
+    /// are out of v2 scope).
+    pub fn transaction(&mut self) -> EngineResult<Transaction<'_>> {
+        if self.in_tx {
+            return Err(EngineError::Schema(
+                "transaction already in progress (nested transactions are out of scope)".into(),
+            ));
+        }
+        self.in_tx = true;
+        Ok(Transaction { store: self })
     }
 
     /// Rollback: discard everything appended since the last commit
@@ -424,6 +519,16 @@ impl Store {
     /// Commit barrier + fsync. Everything appended is now durable.
     pub fn commit(&mut self) -> EngineResult<u64> {
         self.wal.commit()
+    }
+
+    /// Autocommit hook: under `connect`, mutations are durable
+    /// before returning; a live Transaction guard defers to its own
+    /// commit/rollback.
+    fn maybe_autocommit(&mut self) -> EngineResult<()> {
+        if self.autocommit && !self.in_tx {
+            self.wal.commit()?;
+        }
+        Ok(())
     }
 
     fn validate_new_record(&self, record: &Record) -> EngineResult<()> {
@@ -879,6 +984,48 @@ fn build_index(
             HnswIndex::build(cfg.clone(), vectors)
                 .map_err(|e| EngineError::Schema(format!("index backend unusable: {e}")))?,
         )),
+    }
+}
+
+/// API v2 transaction guard: commit via `commit()`, or roll back
+/// everything since `Store::transaction` on drop (abort path).
+/// With `connect` (autocommit) the guard brackets a multi-write
+/// atomic region; with `open` it pairs with explicit commit.
+pub struct Transaction<'a> {
+    store: &'a mut Store,
+}
+
+impl Transaction<'_> {
+    /// Commit the bracketed mutations (durable before returning).
+    pub fn commit(self) -> EngineResult<u64> {
+        self.store.in_tx = false;
+        self.store.commit()
+    }
+}
+
+impl std::ops::Deref for Transaction<'_> {
+    type Target = Store;
+    fn deref(&self) -> &Store {
+        self.store
+    }
+}
+
+impl std::ops::DerefMut for Transaction<'_> {
+    fn deref_mut(&mut self) -> &mut Store {
+        self.store
+    }
+}
+
+impl Drop for Transaction<'_> {
+    fn drop(&mut self) {
+        if self.store.in_tx {
+            // Aborted path: truncate-to-last-commit. Rollback errors
+            // are swallowed here (Drop cannot propagate); the store
+            // remains usable because recovery re-derives from the
+            // WAL on next open either way.
+            let _ = self.store.rollback();
+            self.store.in_tx = false;
+        }
     }
 }
 
@@ -1414,6 +1561,85 @@ mod tests {
         assert!(s.delete("other").is_err());
         s.delete(1).unwrap();
         assert_eq!(s.id_kind(), Some(IdKind::Int));
+    }
+
+    #[test]
+    fn v2_connect_autocommit_and_add() {
+        let dir = tmp_dir("v2connect");
+        {
+            let mut s = Store::connect(&dir).unwrap();
+            // add = columnar batch (Vec<Record> form), n>=1, keyed
+            // last-wins; autocommit: durable before returning
+            let records = vec![
+                rec(1, 0.1).with_text("alpha"),
+                rec(2, 0.2).with_meta("k", crate::records::MetaValue::Int(7)),
+            ];
+            s.add(records).unwrap();
+            // reopen mid-life: autocommitted writes are visible
+            let (s2, _) = Store::open(&dir).unwrap();
+            assert_eq!(s2.len(), 2);
+        }
+        let (s3, _) = Store::open(&dir).unwrap();
+        assert_eq!(s3.len(), 2);
+
+        // keyed last-wins: re-add id 1, whole record replaces
+        let mut s4 = Store::connect(&dir).unwrap();
+        s4.add(vec![rec(1, 0.9)]).unwrap();
+        assert_eq!(s4.len(), 2);
+        let got = s4.get(&ExternalId::Int(1)).unwrap();
+        assert_eq!(got.vector, vec![0.9, 0.45]);
+        assert!(got.text.is_none()); // whole-record, not patch
+    }
+
+    #[test]
+    fn v2_transaction_guard_commit_and_abort() {
+        let dir = tmp_dir("v2tx");
+        let mut s = Store::connect(&dir).unwrap();
+        s.add(vec![rec(1, 0.1)]).unwrap();
+
+        // commit path: writes go through the guard
+        {
+            let mut tx = s.transaction().unwrap();
+            tx.add(vec![rec(2, 0.2), rec(3, 0.3)]).unwrap();
+            tx.commit().unwrap();
+        }
+        assert_eq!(s.len(), 3);
+
+        // abort path: guard drops without commit -> rollback
+        {
+            let mut tx = s.transaction().unwrap();
+            tx.add(vec![rec(4, 0.4), rec(5, 0.5)]).unwrap();
+            // no explicit commit; guard drops here
+        }
+        assert_eq!(s.len(), 3);
+        assert!(s.get(&ExternalId::Int(4)).is_none());
+
+        // post-abort writes resume clean (no resurrection)
+        s.add(vec![rec(6, 0.6)]).unwrap();
+        assert_eq!(s.len(), 4);
+
+        // nested transaction rejected (calling through the guard IS
+        // the nested call — DerefMut reaches the same Store)
+        {
+            let mut tx = s.transaction().unwrap();
+            assert!(tx.transaction().is_err());
+        }
+
+        let (s2, _) = Store::open(&dir).unwrap();
+        assert_eq!(s2.len(), 4);
+    }
+
+    #[test]
+    fn v2_connect_safety_normal_loud_until_merge() {
+        let dir = tmp_dir("v2safety");
+        let err = Store::connect_with(
+            &dir,
+            ConnectOptions {
+                safety: Safety::Normal,
+                ..ConnectOptions::default()
+            },
+        );
+        assert!(err.is_err());
     }
 
     #[test]
