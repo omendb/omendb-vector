@@ -56,7 +56,8 @@ use std::path::{Path, PathBuf};
 const MAGIC: [u8; 4] = *b"OMVW";
 /// On-disk format version. Bumped on any breaking frame/header change;
 /// pre-release 0.x does not keep cross-version compatibility.
-const VERSION: u16 = 1;
+/// v2: record payload carries id_kind + int|string external id.
+const VERSION: u16 = 2;
 /// magic(4) + version(2) + start_seq(8).
 const HEADER_LEN: usize = 14;
 /// First seq handed out by a fresh WAL. Seq 0 is reserved as the "no
@@ -359,6 +360,7 @@ fn frame_seq(payload: &[u8], kind: FrameKind) -> EngineResult<u64> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::records::ExternalId;
     use std::fs;
 
     fn tmp_dir(name: &str) -> PathBuf {
@@ -392,8 +394,8 @@ mod tests {
         assert_eq!(recovery.committed_seq, c);
         assert_eq!(recovery.records.len(), 3);
         assert_eq!(recovery.records[0].0, s1);
-        assert_eq!(recovery.records[0].1.external_id, 1);
-        assert_eq!(recovery.records[2].1.external_id, 3);
+        assert_eq!(recovery.records[0].1.external_id, ExternalId::Int(1));
+        assert_eq!(recovery.records[2].1.external_id, ExternalId::Int(3));
         assert_eq!(recovery.truncated_bytes, 0);
         // seqs continue from the last frame seen
         assert_eq!(wal2.next_seq(), recovery.next_seq);
@@ -412,7 +414,7 @@ mod tests {
 
         let (mut wal2, recovery) = Wal::open(&path).unwrap();
         assert_eq!(recovery.records.len(), 1);
-        assert_eq!(recovery.records[0].1.external_id, 1);
+        assert_eq!(recovery.records[0].1.external_id, ExternalId::Int(1));
         assert_eq!(recovery.dropped_uncommitted, 2);
         assert!(recovery.truncated_bytes > 0);
         // the log now ends at the commit barrier
@@ -424,12 +426,12 @@ mod tests {
         drop(wal2);
 
         let (_, recovery) = Wal::open(&path).unwrap();
-        let ids: Vec<u64> = recovery
+        let ids: Vec<ExternalId> = recovery
             .records
             .iter()
-            .map(|(_, r)| r.external_id)
+            .map(|(_, r)| r.external_id.clone())
             .collect();
-        assert_eq!(ids, vec![1, 4]);
+        assert_eq!(ids, vec![ExternalId::Int(1), ExternalId::Int(4)]);
     }
 
     #[test]
@@ -594,6 +596,22 @@ mod tests {
     }
 
     #[test]
+    fn v1_wal_fails_closed() {
+        // Format v2 bumped the record payload shape (id_kind); a v1
+        // log must be rejected loudly, never interpreted.
+        let dir = tmp_dir("v1wal");
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("wal.log");
+        // header: MAGIC + version 1 + start_seq 1 — valid v1 shape
+        let mut hdr = Vec::new();
+        hdr.extend_from_slice(b"OMVW");
+        hdr.extend_from_slice(&1u16.to_le_bytes());
+        hdr.extend_from_slice(&1u64.to_le_bytes());
+        std::fs::write(&path, hdr).unwrap();
+        assert!(Wal::open(&path).is_err());
+    }
+
+    #[test]
     fn tombstones_replay_with_lifecycle() {
         let dir = tmp_dir("tombstone");
         let path = dir.join("wal.log");
@@ -646,12 +664,15 @@ mod tests {
         drop(wal);
 
         let (_, recovery) = Wal::open(&path).unwrap();
-        let ids: Vec<u64> = recovery
+        let ids: Vec<ExternalId> = recovery
             .records
             .iter()
-            .map(|(_, r)| r.external_id)
+            .map(|(_, r)| r.external_id.clone())
             .collect();
-        assert_eq!(ids, vec![1, 2, 3]);
+        assert_eq!(
+            ids,
+            vec![ExternalId::Int(1), ExternalId::Int(2), ExternalId::Int(3)]
+        );
         assert_eq!(recovery.committed_seq, c2);
         assert!(c2 > c1);
         assert_eq!(recovery.dropped_uncommitted, 1);

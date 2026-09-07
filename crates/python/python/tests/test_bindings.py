@@ -51,7 +51,7 @@ def test_exact_search_oracle(store_dir):
     store.commit()
 
     hits = store.exact_search("dot", [1.0, 0.0], 3)
-    assert [h.external_id for h in hits] == [1, 3, 2]
+    assert [h.id for h in hits] == [1, 3, 2]
     assert hits[0].score > hits[1].score > hits[2].score
 
 
@@ -81,7 +81,7 @@ def test_hnsw_backend_search(store_dir):
     # filtered: only ids with bucket == 1... need engine get to verify
     # (uses filtered_exact_top_k internally, oracle behavior)
     for h in fhits:
-        rid = store.get(h.external_id)["external_id"]
+        rid = store.get(h.id)["external_id"]
         assert rid % 3 == 1
 
 
@@ -91,7 +91,7 @@ def test_text_search(store_dir):
     store.upsert(2, [0.0], text="troubleshooting steps")
     store.commit()
     hits = store.text_search("install guide", 5)
-    assert hits[0].external_id == 1
+    assert hits[0].id == 1
     assert len(hits) == 1
 
 
@@ -101,7 +101,7 @@ def test_hybrid_search_rrf(store_dir):
     store.upsert(2, [0.0, 1.0], text="install omendb")
     store.commit()
     fused = store.hybrid_search(2, 2, vector_query=[1.0, 0.0], text_query="install omendb")
-    ids = [h.external_id for h in fused]
+    ids = [h.id for h in fused]
     assert set(ids) == {1, 2}
 
 
@@ -133,3 +133,39 @@ def test_uncommitted_vanish_on_reopen(store_dir):
     store2, rec = Store.open(path)
     assert len(store2) == 1
     assert store2.get(2) is None
+
+
+def test_string_ids_end_to_end(tmp_path):
+    store, _ = Store.open(str(tmp_path / "db"))
+    store.upsert("doc-a", [0.1, 0.2], text="alpha beta")
+    store.upsert("doc-b", [0.3, 0.4], text="gamma")
+    store.commit()
+
+    # get by string id
+    got = store.get("doc-a")
+    assert got["external_id"] == "doc-a"
+
+    # search returns string ids
+    hits = store.exact_search("dot", [1.0, 1.0], 2)
+    assert {h.id for h in hits} == {"doc-a", "doc-b"}
+
+    # mixed kind rejected
+    try:
+        store.upsert(7, [0.5, 0.5])
+        assert False, "mixed id kind must raise"
+    except Exception:
+        pass
+
+    # delete + checkpoint + reopen: kind and records persist
+    store.delete("doc-b")
+    store.commit()
+    store.checkpoint()
+    store2, _ = Store.open(str(tmp_path / "db"))
+    assert store2.get("doc-a")["external_id"] == "doc-a"
+    assert store2.get("doc-b") is None
+    # string ids still locked after reopen
+    try:
+        store2.upsert(9, [0.5, 0.5])
+        assert False
+    except Exception:
+        pass

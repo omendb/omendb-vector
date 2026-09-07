@@ -39,7 +39,7 @@ use std::path::Path;
 use std::path::PathBuf;
 
 const SEG_MAGIC: [u8; 4] = *b"OMVS";
-const SEG_VERSION: u16 = 1;
+const SEG_VERSION: u16 = 2; // v2: record payload id_kind + int|string ids
 /// magic(4) + version(2) + count(4).
 const SEG_HEADER_LEN: usize = 10;
 const MANIFEST_NAME: &str = "MANIFEST";
@@ -53,8 +53,47 @@ pub struct Manifest {
     pub checkpoint_seq: u64,
     /// Collection vector dimension (records must match).
     pub dim: u32,
+    /// Id kind locked at the first write (0 int, 1 string);
+    /// records must match. Absent in v1 manifests.
+    pub id_kind: Option<u8>,
+    /// Distance metric fixed for the collection (0 dot, 1 cosine,
+    /// 2 l2). Absent in v1 manifests.
+    pub metric: Option<u8>,
     /// Active segment file names (bare names, no directories).
     pub segments: Vec<String>,
+}
+
+/// Collection id kind, locked at the first write like dim.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[repr(u8)]
+pub enum IdKind {
+    Int = 0,
+    Str = 1,
+}
+
+impl IdKind {
+    /// Kind byte persisted in the manifest id_kind field.
+    pub fn id_kind_byte(self) -> u8 {
+        self as u8
+    }
+
+    /// Inverse of `id_kind_byte`; unknown bytes are None.
+    pub fn from_kind_byte(b: u8) -> Option<Self> {
+        match b {
+            0 => Some(IdKind::Int),
+            1 => Some(IdKind::Str),
+            _ => None,
+        }
+    }
+}
+
+impl std::fmt::Display for IdKind {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            IdKind::Int => write!(f, "int"),
+            IdKind::Str => write!(f, "string"),
+        }
+    }
 }
 
 /// A segment held open for reads.
@@ -239,6 +278,7 @@ mod fsutil {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::records::ExternalId;
 
     fn tmp_dir(name: &str) -> PathBuf {
         let dir = std::env::temp_dir()
@@ -263,7 +303,7 @@ mod tests {
         let name = write_segment(&dir, 1, &entries).unwrap();
         let seg = SegmentReader::open(&dir, &name).unwrap();
         assert_eq!(seg.entries().len(), 3);
-        assert_eq!(seg.entries()[0].record.external_id, 10);
+        assert_eq!(seg.entries()[0].record.external_id, ExternalId::Int(10));
         assert_eq!(seg.entries()[2].seq, 3);
     }
 
@@ -319,6 +359,8 @@ mod tests {
             generation: 3,
             checkpoint_seq: 42,
             dim: 4,
+            id_kind: Some(0),
+            metric: Some(1),
             segments: vec!["a.seg".into(), "b.seg".into()],
         };
         publish_manifest(&dir, &m).unwrap();
@@ -352,6 +394,8 @@ mod tests {
             generation: 1,
             checkpoint_seq: 1,
             dim: 2,
+            id_kind: Some(0),
+            metric: Some(2),
             segments: vec![live.clone()],
         };
         publish_manifest(&dir, &m).unwrap();

@@ -30,9 +30,9 @@
 use crate::error::{EngineError, EngineResult};
 use crate::filter::Filter;
 use crate::index::{ExactIndex, HnswConfig, HnswIndex, IndexedVector, VectorIndex};
-use crate::records::{Lifecycle, Record};
+use crate::records::{ExternalId, Lifecycle, Record};
 use crate::segments::{
-    gc_segments, load_manifest, publish_manifest, write_segment, Manifest, SegmentEntry,
+    gc_segments, load_manifest, publish_manifest, write_segment, IdKind, Manifest, SegmentEntry,
     SegmentReader,
 };
 use crate::text::Postings;
@@ -75,14 +75,14 @@ pub struct StoreRecovery {
 #[derive(Debug, Default)]
 struct L0 {
     /// external_id -> (seq, record)
-    live: HashMap<u64, (u64, Record)>,
+    live: HashMap<ExternalId, (u64, Record)>,
 }
 
 impl L0 {
     fn apply(&mut self, seq: u64, record: Record) {
         // WAL seqs are strictly increasing, so an existing entry
         // always has a lower seq; last write wins.
-        self.live.insert(record.external_id, (seq, record));
+        self.live.insert(record.external_id.clone(), (seq, record));
     }
 }
 
@@ -91,6 +91,12 @@ pub struct Store {
     dir: PathBuf,
     wal: Wal,
     dim: u32,
+    /// Id kind locked at the first write (like dim); mixed kinds
+    /// are a schema error, never a silent coercion.
+    id_kind: Option<IdKind>,
+    /// Metric fixed for the collection once set; None until the
+    /// first write or a persisted value loads from the manifest.
+    metric: Option<Metric>,
     /// Segment files in the manifest, opened.
     segments: Vec<SegmentReader>,
     /// Per-segment index (same order as `segments`). Built at seal
@@ -102,7 +108,7 @@ pub struct Store {
     backend: IndexBackend,
     /// Live ids in segments: id -> seq (sealed segments hold only
     /// live records, so membership == liveness).
-    seg_live: HashMap<u64, u64>,
+    seg_live: HashMap<ExternalId, u64>,
     checkpoint_seq: u64,
     generation: u64,
     l0: L0,
@@ -159,6 +165,8 @@ impl Store {
         let mut segments: Vec<SegmentReader> = Vec::new();
         let mut checkpoint_seq = 0u64;
         let mut dim = 0u32;
+        let mut manifest_id_kind: Option<IdKind> = None;
+        let mut manifest_metric: Option<Metric> = None;
 
         if let Some(m) = load_manifest(&dir)? {
             let mut usable = m.checkpoint_seq <= wal_rec.committed_seq;
@@ -177,6 +185,29 @@ impl Store {
                 manifest_gen = Some(m.generation);
                 checkpoint_seq = m.checkpoint_seq;
                 dim = m.dim;
+                // v2 manifests carry id_kind/metric when the store has
+                // ever held records. A manifest with records but no
+                // id_kind is v1 — fail closed (no silent defaults). A
+                // dim-0 manifest (empty store) legitimately carries
+                // null fields until the first write.
+                if m.dim > 0 || !m.segments.is_empty() {
+                    manifest_id_kind = Some(
+                        IdKind::from_kind_byte(m.id_kind.ok_or_else(|| {
+                            EngineError::Segment(
+                                "manifest is format v1 (no id_kind); reopen requires a v2 store"
+                                    .into(),
+                            )
+                        })?)
+                        .ok_or_else(|| {
+                            EngineError::Segment("manifest carries an unknown id_kind byte".into())
+                        })?,
+                    );
+                }
+                if let Some(b) = m.metric {
+                    manifest_metric = Some(Metric::from_kind_byte(b).ok_or_else(|| {
+                        EngineError::Segment("manifest carries an unknown metric byte".into())
+                    })?);
+                }
             } else {
                 // A manifest we cannot honor is a lie; rebuild from the
                 // WAL (the sole authority) and replace it.
@@ -187,10 +218,10 @@ impl Store {
             rebuilt = true; // no manifest: everything from the WAL
         }
 
-        let seg_live: HashMap<u64, u64> = segments
+        let seg_live: HashMap<ExternalId, u64> = segments
             .iter()
             .flat_map(|seg| seg.entries())
-            .map(|e| (e.record.external_id, e.seq))
+            .map(|e| (e.record.external_id.clone(), e.seq))
             .collect();
         // Build per-segment indexes per the configured backend.
         let seg_indexes = segments
@@ -200,7 +231,11 @@ impl Store {
                     .entries()
                     .iter()
                     .map(|e| {
-                        IndexedVector::new(e.record.external_id, e.seq, e.record.vector.clone())
+                        IndexedVector::new(
+                            e.record.external_id.clone(),
+                            e.seq,
+                            e.record.vector.clone(),
+                        )
                     })
                     .collect();
                 build_index(&backend, vectors)
@@ -213,6 +248,8 @@ impl Store {
             dir,
             wal,
             dim,
+            id_kind: manifest_id_kind,
+            metric: manifest_metric,
             segments,
             checkpoint_seq,
             generation: manifest_gen.unwrap_or(0),
@@ -235,6 +272,8 @@ impl Store {
                 generation: store.generation,
                 checkpoint_seq: 0,
                 dim: store.dim,
+                id_kind: store.id_kind.map(IdKind::id_kind_byte),
+                metric: store.metric.map(Metric::kind_byte),
                 segments: Vec::new(),
             };
             publish_manifest(&store.dir, &m)?;
@@ -258,8 +297,9 @@ impl Store {
         Ok((store, recovery))
     }
 
-    /// Apply a replayed WAL record. Validates dim consistency; the
-    /// first record defines the dim when the manifest had none.
+    /// Apply a replayed WAL record. Validates dim and id-kind
+    /// consistency; the first record defines them when the manifest
+    /// had none (id kind from the record itself, never defaulted).
     fn apply_replayed(&mut self, seq: u64, record: Record) -> EngineResult<()> {
         if self.dim == 0 {
             self.dim = record.vector.len() as u32;
@@ -271,6 +311,17 @@ impl Store {
                 self.dim
             )));
         }
+        let record_kind = record.id_kind();
+        match self.id_kind {
+            None => self.id_kind = Some(record_kind),
+            Some(locked) if locked == record_kind => {}
+            Some(locked) => {
+                return Err(EngineError::Schema(format!(
+                    "replayed record id kind {} != collection id kind {}",
+                    record_kind, locked
+                )));
+            }
+        }
         self.l0.apply(seq, record);
         Ok(())
     }
@@ -280,12 +331,54 @@ impl Store {
         self.dim
     }
 
+    /// Id kind locked at first write (None until then).
+    pub fn id_kind(&self) -> Option<IdKind> {
+        self.id_kind
+    }
+
+    /// Collection metric: fixed once set (first metric-ful query or
+    /// explicit set), then persisted in every manifest. Queries with
+    /// a different metric are schema errors — per-call metric on a
+    /// single-metric index is a footgun (Qdrant-style collection
+    /// state).
+    pub fn metric(&self) -> Option<Metric> {
+        self.metric
+    }
+
+    /// Fix the collection metric. Errors if a different metric is
+    /// already locked. Idempotent when equal.
+    pub fn set_metric(&mut self, metric: Metric) -> EngineResult<()> {
+        match self.metric {
+            Some(locked) if locked == metric => Ok(()),
+            Some(locked) => Err(EngineError::Schema(format!(
+                "metric {metric:?} != collection metric {locked:?} (fixed at first use)"
+            ))),
+            None => {
+                self.metric = Some(metric);
+                Ok(())
+            }
+        }
+    }
+
     /// Append an upsert (live record). Not durable until `commit`.
-    /// The first upsert fixes the collection dim.
+    /// The first upsert fixes the collection dim and id kind;
+    /// later writes of the other kind are a schema error (no
+    /// silent coercion, same rule as dim).
     pub fn upsert(&mut self, record: Record) -> EngineResult<u64> {
         self.validate_new_record(&record)?;
         if self.dim == 0 {
             self.dim = record.vector.len() as u32;
+        }
+        let record_kind = record.id_kind();
+        match self.id_kind {
+            None => self.id_kind = Some(record_kind),
+            Some(locked) if locked == record_kind => {}
+            Some(locked) => {
+                return Err(EngineError::Schema(format!(
+                    "record id kind {} != collection id kind {} (locked at first write)",
+                    record_kind, locked
+                )));
+            }
         }
         let seq = self.wal.append(&record)?;
         self.l0.apply(seq, record);
@@ -295,8 +388,9 @@ impl Store {
     /// Append a tombstone. Not durable until `commit`. Deleting an
     /// unknown/dead id is an error — v0 makes that explicit rather
     /// than guessing caller intent.
-    pub fn delete(&mut self, external_id: u64) -> EngineResult<u64> {
-        if !self.is_live(external_id) {
+    pub fn delete(&mut self, external_id: impl Into<ExternalId>) -> EngineResult<u64> {
+        let external_id = external_id.into();
+        if !self.is_live(&external_id) {
             return Err(EngineError::Schema(format!(
                 "delete of unknown or dead id {external_id}"
             )));
@@ -333,25 +427,25 @@ impl Store {
     }
 
     /// Is this external id live anywhere (L0 first, then segments)?
-    fn is_live(&self, external_id: u64) -> bool {
-        if let Some((_, r)) = self.l0.live.get(&external_id) {
+    fn is_live(&self, external_id: &ExternalId) -> bool {
+        if let Some((_, r)) = self.l0.live.get(external_id) {
             return r.lifecycle == Lifecycle::Live;
         }
-        self.seg_live.contains_key(&external_id)
+        self.seg_live.contains_key(external_id)
     }
 
     /// The merged live view: full records (vector, text, meta, norm),
     /// latest seq per id across segments + L0, tombstones winning
     /// when newest, output sorted by seq (the order segment writes
     /// require).
-    fn merged_live(&self) -> Vec<(u64, u64, Record)> {
-        let mut best: HashMap<u64, (u64, Record)> = HashMap::new();
+    fn merged_live(&self) -> Vec<(ExternalId, u64, Record)> {
+        let mut best: HashMap<ExternalId, (u64, Record)> = HashMap::new();
         for seg in &self.segments {
             for e in seg.entries() {
                 match best.get(&e.record.external_id) {
                     Some((s, _)) if *s >= e.seq => {}
                     _ => {
-                        best.insert(e.record.external_id, (e.seq, e.record.clone()));
+                        best.insert(e.record.external_id.clone(), (e.seq, e.record.clone()));
                     }
                 }
             }
@@ -360,11 +454,11 @@ impl Store {
             match best.get(id) {
                 Some((s, _)) if *s >= *seq => {}
                 _ => {
-                    best.insert(*id, (*seq, r.clone()));
+                    best.insert(id.clone(), (*seq, r.clone()));
                 }
             }
         }
-        let mut out: Vec<(u64, u64, Record)> = best
+        let mut out: Vec<(ExternalId, u64, Record)> = best
             .into_iter()
             .filter(|(_, (_, r))| r.lifecycle == Lifecycle::Live)
             .map(|(id, (seq, r))| (id, seq, r))
@@ -402,7 +496,7 @@ impl Store {
             .live
             .values()
             .filter(|(_, r)| r.lifecycle == Lifecycle::Live)
-            .map(|(seq, r)| IndexedVector::new(r.external_id, *seq, r.vector.clone()))
+            .map(|(seq, r)| IndexedVector::new(r.external_id.clone(), *seq, r.vector.clone()))
             .collect();
         if !l0_vecs.is_empty() {
             let l0_idx: Arc<dyn VectorIndex> = Arc::new(ExactIndex::build(l0_vecs));
@@ -411,12 +505,13 @@ impl Store {
         // Merge: dedupe by external id (segments hold disjoint ids in
         // v0's single-segment layout, but stay correct for any
         // layout), keep best score, sort, truncate.
-        let mut best: HashMap<u64, Hit> = HashMap::new();
+        let mut best: HashMap<ExternalId, Hit> = HashMap::new();
         for h in all {
             match best.get(&h.external_id) {
                 Some(prev) if prev.score >= h.score => {}
                 _ => {
-                    best.insert(h.external_id, h);
+                    let id = h.external_id.clone();
+                    best.insert(id, h);
                 }
             }
         }
@@ -447,23 +542,23 @@ impl Store {
             return Vec::new();
         }
         // Shadowing: ids whose latest state is in L0.
-        let shadowed: HashSet<u64> = self.l0.live.keys().copied().collect();
+        let shadowed: HashSet<&ExternalId> = self.l0.live.keys().collect();
 
         // Candidate docs: live, not shadowed, from segments; all
         // live from L0.
-        let mut cands: Vec<(u64, u64, Option<&str>)> = Vec::new();
+        let mut cands: Vec<(&ExternalId, u64, Option<&str>)> = Vec::new();
         for seg in &self.segments {
             for e in seg.entries() {
                 if e.record.lifecycle == Lifecycle::Live
                     && !shadowed.contains(&e.record.external_id)
                 {
-                    cands.push((e.record.external_id, e.seq, e.record.text.as_deref()));
+                    cands.push((&e.record.external_id, e.seq, e.record.text.as_deref()));
                 }
             }
         }
         for (id, (seq, r)) in &self.l0.live {
             if r.lifecycle == Lifecycle::Live {
-                cands.push((*id, *seq, r.text.as_deref()));
+                cands.push((id, *seq, r.text.as_deref()));
             }
         }
         if cands.is_empty() {
@@ -482,11 +577,11 @@ impl Store {
         let top = postings.top_k(query, k, &|_| true);
         top.into_iter()
             .map(|(doc, score)| {
-                let (external_id, seq, _) = cands[doc as usize];
+                let (external_id, seq, _) = &cands[doc as usize];
                 Hit {
-                    external_id,
+                    external_id: (*external_id).clone(),
                     score,
-                    seq,
+                    seq: *seq,
                 }
             })
             .collect()
@@ -620,11 +715,11 @@ impl Store {
     }
 
     /// Fetch a live record by external id.
-    pub fn get(&self, external_id: u64) -> Option<Record> {
+    pub fn get(&self, external_id: &ExternalId) -> Option<Record> {
         if !self.is_live(external_id) {
             return None;
         }
-        if let Some((_, r)) = self.l0.live.get(&external_id) {
+        if let Some((_, r)) = self.l0.live.get(external_id) {
             if r.lifecycle == Lifecycle::Live {
                 return Some(r.clone());
             }
@@ -634,7 +729,7 @@ impl Store {
         self.segments
             .iter()
             .flat_map(|seg| seg.entries())
-            .find(|e| e.record.external_id == external_id && e.record.lifecycle == Lifecycle::Live)
+            .find(|e| &e.record.external_id == external_id && e.record.lifecycle == Lifecycle::Live)
             .map(|e| e.record.clone())
     }
 
@@ -673,6 +768,8 @@ impl Store {
             generation: self.generation,
             checkpoint_seq: committed,
             dim: self.dim,
+            id_kind: self.id_kind.map(IdKind::id_kind_byte),
+            metric: self.metric.map(Metric::kind_byte),
             segments: vec![name.clone()],
         };
         publish_manifest(&self.dir, &manifest)?;
@@ -684,13 +781,15 @@ impl Store {
             new_seg
                 .entries()
                 .iter()
-                .map(|e| IndexedVector::new(e.record.external_id, e.seq, e.record.vector.clone()))
+                .map(|e| {
+                    IndexedVector::new(e.record.external_id.clone(), e.seq, e.record.vector.clone())
+                })
                 .collect(),
         );
         self.seg_live = new_seg
             .entries()
             .iter()
-            .map(|e| (e.record.external_id, e.seq))
+            .map(|e| (e.record.external_id.clone(), e.seq))
             .collect();
         self.segments = vec![new_seg];
         self.seg_indexes = vec![new_index?];
@@ -767,8 +866,8 @@ mod tests {
         for k in [1usize, 5, 10] {
             let merged = s.search(Metric::L2, &[0.5, 0.5, 0.5], k, k).unwrap();
             let oracle = s.exact_top_k(Metric::L2, &[0.5, 0.5, 0.5], k).unwrap();
-            let m: Vec<u64> = merged.iter().map(|h| h.external_id).collect();
-            let o: Vec<u64> = oracle.iter().map(|h| h.external_id).collect();
+            let m: Vec<ExternalId> = merged.iter().map(|h| h.external_id.clone()).collect();
+            let o: Vec<ExternalId> = oracle.iter().map(|h| h.external_id.clone()).collect();
             // HNSW is approximate: require >= 80% overlap at each k
             // (the gate for store-level recall, stricter than the
             // 0.002 rule which applies to backend-vs-oracle only).
@@ -788,8 +887,14 @@ mod tests {
         let merged = s.search(Metric::Dot, &[1.0, 1.0, 1.0], 5, 5).unwrap();
         let oracle = s.exact_top_k(Metric::Dot, &[1.0, 1.0, 1.0], 5).unwrap();
         assert_eq!(
-            merged.iter().map(|h| h.external_id).collect::<Vec<_>>(),
-            oracle.iter().map(|h| h.external_id).collect::<Vec<_>>()
+            merged
+                .iter()
+                .map(|h| h.external_id.clone())
+                .collect::<Vec<_>>(),
+            oracle
+                .iter()
+                .map(|h| h.external_id.clone())
+                .collect::<Vec<_>>()
         );
     }
 
@@ -839,8 +944,10 @@ mod tests {
             let want = crate::text::exact_text_top_k(&refs, q, k);
             // Same id SET (order may differ slightly between segment
             // stats and global stats on ties).
-            let gs: std::collections::HashSet<u64> = got.iter().map(|h| h.external_id).collect();
-            let ws: std::collections::HashSet<u64> = want.iter().map(|(id, _)| *id).collect();
+            let gs: std::collections::HashSet<ExternalId> =
+                got.iter().map(|h| h.external_id.clone()).collect();
+            let ws: std::collections::HashSet<ExternalId> =
+                want.iter().map(|(id, _)| id.clone()).collect();
             assert_eq!(gs, ws, "q={q}: got {gs:?} want {ws:?}");
         }
     }
@@ -861,15 +968,16 @@ mod tests {
         s.commit().unwrap();
         let hits = s.text_search("install guide", 5);
         assert!(
-            hits.iter().all(|h| h.external_id != 1) || {
+            hits.iter().all(|h| h.external_id != ExternalId::Int(1)) || {
                 // id 1 may surface only via its NEW text
-                hits.iter().all(|h| h.external_id != 1 || h.score == 0.0)
+                hits.iter()
+                    .all(|h| h.external_id != ExternalId::Int(1) || h.score == 0.0)
             }
         );
         assert!(s
             .text_search("troubleshooting content", 5)
             .iter()
-            .any(|h| h.external_id == 1));
+            .any(|h| h.external_id == ExternalId::Int(1)));
     }
 
     #[test]
@@ -886,8 +994,8 @@ mod tests {
         }
         let (s2, _) = Store::open(&dir).unwrap();
         let hits = s2.text_search("hello world", 5);
-        let ids: Vec<u64> = hits.iter().map(|h| h.external_id).collect();
-        assert!(ids.contains(&1) && ids.contains(&2));
+        let ids: Vec<ExternalId> = hits.iter().map(|h| h.external_id.clone()).collect();
+        assert!(ids.contains(&ExternalId::Int(1)) && ids.contains(&ExternalId::Int(2)));
     }
 
     #[test]
@@ -899,7 +1007,7 @@ mod tests {
             .unwrap();
         s.commit().unwrap();
         s.checkpoint().unwrap();
-        assert!(s.text_search("words", 5)[0].external_id == 2);
+        assert!(s.text_search("words", 5)[0].external_id == ExternalId::Int(2));
         assert!(s.text_search("nothing matches this", 5).is_empty());
         assert!(s.text_search("anything", 0).is_empty());
     }
@@ -937,16 +1045,16 @@ mod tests {
             .unwrap();
         // Oracle restricted to matching ids.
         let unfiltered = s.exact_top_k(Metric::Dot, &[1.0, 0.0], 40).unwrap();
-        let expect: Vec<u64> = unfiltered
+        let expect: Vec<ExternalId> = unfiltered
             .iter()
             .filter(|h| {
-                let r = s.get(h.external_id).unwrap();
+                let r = s.get(&h.external_id).unwrap();
                 filter.matches(&r).unwrap()
             })
-            .map(|h| h.external_id)
+            .map(|h| h.external_id.clone())
             .take(5)
             .collect();
-        let got: Vec<u64> = filtered.iter().map(|h| h.external_id).collect();
+        let got: Vec<ExternalId> = filtered.iter().map(|h| h.external_id.clone()).collect();
         assert_eq!(got, expect);
         // Empty filter = everything.
         let all = s
@@ -1013,7 +1121,7 @@ mod tests {
                 3,
             )
             .unwrap();
-        assert_eq!(fused[0].external_id, 1);
+        assert_eq!(fused[0].external_id, ExternalId::Int(1));
         assert_eq!(fused.len(), 3);
     }
 
@@ -1043,9 +1151,12 @@ mod tests {
         // Fused: id2 = 1/61+1/63 (0.0325), id3 = 1/62+1/62 (0.0322),
         // id1 = 1/61 only (0.0164). Order [2, 3, 1] — the dual-path
         // records beat the single-path vector winner.
-        let ids: Vec<u64> = fused.iter().map(|h| h.external_id).collect();
-        assert!(ids.contains(&1) && ids.contains(&2));
-        assert_eq!(ids, vec![2, 3, 1]);
+        let ids: Vec<ExternalId> = fused.iter().map(|h| h.external_id.clone()).collect();
+        assert!(ids.contains(&ExternalId::Int(1)) && ids.contains(&ExternalId::Int(2)));
+        assert_eq!(
+            ids,
+            vec![ExternalId::Int(2), ExternalId::Int(3), ExternalId::Int(1)]
+        );
     }
 
     #[test]
@@ -1059,10 +1170,10 @@ mod tests {
         let v = s
             .hybrid_search_rrf(Some((&[1.0, 0.0], Metric::Dot)), None, 2, 2)
             .unwrap();
-        assert_eq!(v[0].external_id, 1);
+        assert_eq!(v[0].external_id, ExternalId::Int(1));
         // text only
         let t = s.hybrid_search_rrf(None, Some("alpha"), 2, 2).unwrap();
-        assert_eq!(t[0].external_id, 1);
+        assert_eq!(t[0].external_id, ExternalId::Int(1));
         // no paths: error
         assert!(s.hybrid_search_rrf(None, None, 2, 2).is_err());
         // window < k: error
@@ -1105,10 +1216,13 @@ mod tests {
                 )
                 .unwrap();
             assert_eq!(
-                before.iter().map(|h| h.external_id).collect::<Vec<_>>(),
+                before
+                    .iter()
+                    .map(|h| h.external_id.clone())
+                    .collect::<Vec<_>>(),
                 after_checkpoint
                     .iter()
-                    .map(|h| h.external_id)
+                    .map(|h| h.external_id.clone())
                     .collect::<Vec<_>>(),
                 "checkpoint must not change fused results on a frozen corpus"
             );
@@ -1137,8 +1251,14 @@ mod tests {
             .unwrap();
         // Reopen (L0 survives via WAL replay) preserves fused results.
         assert_eq!(
-            with_l0.iter().map(|h| h.external_id).collect::<Vec<_>>(),
-            after.iter().map(|h| h.external_id).collect::<Vec<_>>(),
+            with_l0
+                .iter()
+                .map(|h| h.external_id.clone())
+                .collect::<Vec<_>>(),
+            after
+                .iter()
+                .map(|h| h.external_id.clone())
+                .collect::<Vec<_>>(),
         );
         // Determinism: same query twice on the reopened store.
         let again = s2
@@ -1150,8 +1270,14 @@ mod tests {
             )
             .unwrap();
         assert_eq!(
-            after.iter().map(|h| h.external_id).collect::<Vec<_>>(),
-            again.iter().map(|h| h.external_id).collect::<Vec<_>>()
+            after
+                .iter()
+                .map(|h| h.external_id.clone())
+                .collect::<Vec<_>>(),
+            again
+                .iter()
+                .map(|h| h.external_id.clone())
+                .collect::<Vec<_>>()
         );
         let _ = before;
     }
@@ -1175,16 +1301,28 @@ mod tests {
         for k in [1usize, 3, 7, 15] {
             let merged = s.search(Metric::Dot, &[1.0, 0.0], k, k).unwrap();
             let oracle = s.exact_top_k(Metric::Dot, &[1.0, 0.0], k).unwrap();
-            let m: Vec<(u64, f32)> = merged.iter().map(|h| (h.external_id, h.score)).collect();
-            let o: Vec<(u64, f32)> = oracle.iter().map(|h| (h.external_id, h.score)).collect();
+            let m: Vec<_> = merged
+                .iter()
+                .map(|h| (h.external_id.clone(), h.score))
+                .collect();
+            let o: Vec<_> = oracle
+                .iter()
+                .map(|h| (h.external_id.clone(), h.score))
+                .collect();
             assert_eq!(m, o, "k={k}");
         }
         // cosine too
         let merged = s.search(Metric::Cosine, &[1.0, 0.0], 5, 5).unwrap();
         let oracle = s.exact_top_k(Metric::Cosine, &[1.0, 0.0], 5).unwrap();
         assert_eq!(
-            merged.iter().map(|h| h.external_id).collect::<Vec<_>>(),
-            oracle.iter().map(|h| h.external_id).collect::<Vec<_>>()
+            merged
+                .iter()
+                .map(|h| h.external_id.clone())
+                .collect::<Vec<_>>(),
+            oracle
+                .iter()
+                .map(|h| h.external_id.clone())
+                .collect::<Vec<_>>()
         );
     }
 
@@ -1201,22 +1339,97 @@ mod tests {
     }
 
     #[test]
+    fn mixed_id_kind_rejected() {
+        let dir = tmp_dir("mixedkind");
+        let mut s = Store::open(&dir).unwrap().0;
+        s.upsert(rec(1, 0.1)).unwrap(); // int ids lock the collection
+        let wrong = Record::new("str-id", vec![0.1, 0.2]);
+        assert!(matches!(s.upsert(wrong), Err(EngineError::Schema(_))));
+        // delete with the other kind: unknown id either way
+        assert!(s.delete("other").is_err());
+        s.delete(1).unwrap();
+        assert_eq!(s.id_kind(), Some(IdKind::Int));
+    }
+
+    #[test]
+    fn string_ids_round_trip_and_checkpoint() {
+        let dir = tmp_dir("strids");
+        {
+            let mut s = Store::open(&dir).unwrap().0;
+            s.upsert(Record::new("doc-a", vec![0.1, 0.2]).with_norm())
+                .unwrap();
+            s.upsert(Record::new("doc-b", vec![0.3, 0.4]).with_norm())
+                .unwrap();
+            // same string id replaces (keyed last-wins)
+            s.upsert(Record::new("doc-a", vec![0.5, 0.6]).with_norm())
+                .unwrap();
+            s.commit().unwrap();
+            assert_eq!(s.len(), 2);
+            let got = s.get(&ExternalId::Str("doc-a".into())).unwrap();
+            assert_eq!(got.vector, vec![0.5, 0.6]);
+            s.delete("doc-b").unwrap();
+            s.commit().unwrap();
+            s.checkpoint().unwrap();
+            assert_eq!(s.id_kind(), Some(IdKind::Str));
+        }
+        // reopen: kind persisted, records intact, L0 empty
+        let (mut s2, _) = Store::open(&dir).unwrap();
+        assert_eq!(s2.id_kind(), Some(IdKind::Str));
+        assert_eq!(s2.len(), 1);
+        assert!(s2.get(&ExternalId::Str("doc-a".into())).is_some());
+        assert!(s2.get(&ExternalId::Str("doc-b".into())).is_none());
+        // mixed kind after reopen still rejected
+        assert!(matches!(
+            s2.upsert(Record::new(7, vec![0.1, 0.2])),
+            Err(EngineError::Schema(_))
+        ));
+    }
+
+    #[test]
+    fn metric_locked_and_persisted() {
+        let dir = tmp_dir("metriclock");
+        {
+            let mut s = Store::open(&dir).unwrap().0;
+            s.set_metric(Metric::Cosine).unwrap();
+            s.set_metric(Metric::Cosine).unwrap(); // idempotent
+            assert!(matches!(
+                s.set_metric(Metric::L2),
+                Err(EngineError::Schema(_))
+            ));
+            s.upsert(rec(1, 0.1)).unwrap();
+            s.commit().unwrap();
+            s.checkpoint().unwrap();
+        }
+        let (mut s2, _) = Store::open(&dir).unwrap();
+        assert_eq!(s2.metric(), Some(Metric::Cosine));
+        assert!(matches!(
+            s2.set_metric(Metric::Dot),
+            Err(EngineError::Schema(_))
+        ));
+    }
+
+    #[test]
     fn upsert_commit_checkpoint_reopen_equivalence() {
         let dir = tmp_dir("equivalence");
-        let ids_scores_before: Vec<(u64, f32)> = {
+        let ids_scores_before: Vec<(crate::records::ExternalId, f32)> = {
             let mut s = Store::open(&dir).unwrap().0;
             s.upsert(rec(1, 0.1)).unwrap();
             s.upsert(rec(2, 0.5)).unwrap();
             s.upsert(rec(3, 0.9)).unwrap();
             s.commit().unwrap();
             let top = s.exact_top_k(Metric::Dot, &[1.0, 0.5], 3).unwrap();
-            top.iter().map(|h| (h.external_id, h.score)).collect()
+            top.iter()
+                .map(|h| (h.external_id.clone(), h.score))
+                .collect()
         };
         {
             let mut s = Store::open(&dir).unwrap().0;
             s.checkpoint().unwrap();
             let top = s.exact_top_k(Metric::Dot, &[1.0, 0.5], 3).unwrap();
-            let after: Vec<(u64, f32)> = top.iter().map(|h| (h.external_id, h.score)).collect();
+            let after: Vec<_> = top
+                .iter()
+                .map(|h| (h.external_id.clone(), h.score))
+                .collect();
             assert_eq!(ids_scores_before, after);
         }
         // Full reopen equivalence: same view from segments+manifest.
@@ -1224,7 +1437,10 @@ mod tests {
         assert!(!recovery.rebuilt_from_wal);
         assert!(recovery.manifest_generation.is_some());
         let top2 = s2.exact_top_k(Metric::Dot, &[1.0, 0.5], 3).unwrap();
-        let after2: Vec<(u64, f32)> = top2.iter().map(|h| (h.external_id, h.score)).collect();
+        let after2: Vec<_> = top2
+            .iter()
+            .map(|h| (h.external_id.clone(), h.score))
+            .collect();
         assert_eq!(ids_scores_before, after2);
         assert_eq!(s2.len(), 3);
         assert_eq!(s2.dim(), 2);
@@ -1237,7 +1453,7 @@ mod tests {
         s.upsert(rec(1, 0.1)).unwrap();
         s.upsert(rec(1, 0.9)).unwrap(); // same id, new vector
         s.commit().unwrap();
-        let got = s.get(1).unwrap();
+        let got = s.get(&ExternalId::Int(1)).unwrap();
         assert_eq!(got.vector, vec![0.9, 0.45]);
         assert_eq!(s.len(), 1);
     }
@@ -1254,7 +1470,7 @@ mod tests {
         s.commit().unwrap();
         s.checkpoint().unwrap();
         let (s2, _) = Store::open(&dir).unwrap();
-        let got = s2.get(7).unwrap();
+        let got = s2.get(&ExternalId::Int(7)).unwrap();
         assert_eq!(got.text.as_deref(), Some("hello vector engine"));
         assert_eq!(got.meta.len(), 1);
         assert!(got.norm.is_some());
@@ -1272,8 +1488,8 @@ mod tests {
         s.checkpoint().unwrap(); // must not error on seq ordering
         let (s2, _) = Store::open(&dir).unwrap();
         assert_eq!(s2.len(), 2);
-        assert!(s2.get(5).is_some());
-        assert!(s2.get(1).is_some());
+        assert!(s2.get(&ExternalId::Int(5)).is_some());
+        assert!(s2.get(&ExternalId::Int(1)).is_some());
     }
 
     #[test]
@@ -1286,15 +1502,15 @@ mod tests {
         s.delete(1).unwrap();
         s.commit().unwrap();
         assert_eq!(s.len(), 1);
-        assert!(s.get(1).is_none());
+        assert!(s.get(&ExternalId::Int(1)).is_none());
 
         s.checkpoint().unwrap();
         assert_eq!(s.len(), 1);
 
         let (s2, _) = Store::open(&dir).unwrap();
         assert_eq!(s2.len(), 1);
-        assert!(s2.get(1).is_none());
-        assert!(s2.get(2).is_some());
+        assert!(s2.get(&ExternalId::Int(1)).is_none());
+        assert!(s2.get(&ExternalId::Int(2)).is_some());
     }
 
     #[test]
@@ -1338,8 +1554,8 @@ mod tests {
         }
         let (s2, recovery) = Store::open(&dir).unwrap();
         assert_eq!(s2.len(), 1);
-        assert!(s2.get(1).is_some());
-        assert!(s2.get(2).is_none());
+        assert!(s2.get(&ExternalId::Int(1)).is_some());
+        assert!(s2.get(&ExternalId::Int(2)).is_none());
         assert_eq!(recovery.wal.dropped_uncommitted, 1);
     }
 
@@ -1406,7 +1622,7 @@ mod tests {
         let (s2, recovery) = Store::open(&dir).unwrap();
         assert!(recovery.rebuilt_from_wal);
         assert_eq!(s2.len(), 1);
-        assert!(s2.get(1).is_some());
+        assert!(s2.get(&ExternalId::Int(1)).is_some());
     }
 
     #[test]
@@ -1418,10 +1634,10 @@ mod tests {
         s.commit().unwrap();
         // 1-dim query matches the first dim only
         let top = s.exact_top_k(Metric::Dot, &[1.0], 2).unwrap();
-        assert_eq!(top[0].external_id, 1);
+        assert_eq!(top[0].external_id, ExternalId::Int(1));
         // 2-dim query
         let top2 = s.exact_top_k(Metric::Dot, &[0.0, 1.0], 2).unwrap();
-        assert_eq!(top2[0].external_id, 2);
+        assert_eq!(top2[0].external_id, ExternalId::Int(2));
         // query longer than stored dim rejected
         assert!(matches!(
             s.exact_top_k(Metric::Dot, &[1.0, 1.0, 1.0, 1.0], 1),
@@ -1441,7 +1657,7 @@ mod tests {
         assert_eq!(cos.len(), 2);
         assert!((cos[0].score - 1.0).abs() < 1e-6);
         let l2 = s.exact_top_k(Metric::L2, &[1.0, 0.5], 2).unwrap();
-        assert_eq!(l2[0].external_id, 1); // exact match wins on L2
+        assert_eq!(l2[0].external_id, ExternalId::Int(1)); // exact match wins on L2
         assert!(l2[0].score >= -1e-9); // ~0 distance
     }
 
@@ -1460,7 +1676,7 @@ mod tests {
         let (s2, _) = Store::open(&dir).unwrap();
         assert_eq!(s2.len(), 2);
         let top = s2.exact_top_k(Metric::Dot, &[1.0, 0.5], 2).unwrap();
-        assert_eq!(top[0].external_id, 2); // 0.25 vs 0.125 dot
+        assert_eq!(top[0].external_id, ExternalId::Int(2)); // 0.25 vs 0.125 dot
     }
 
     #[test]
@@ -1495,7 +1711,7 @@ mod tests {
         // zero-norm stored record under cosine: excluded, not fatal
         let cos = s.exact_top_k(Metric::Cosine, &[1.0, 0.5], 2).unwrap();
         assert_eq!(cos.len(), 1);
-        assert_eq!(cos[0].external_id, 2);
+        assert_eq!(cos[0].external_id, ExternalId::Int(2));
         // zero query under dot/L2: fine (all-zero scores)
         let dot = s.exact_top_k(Metric::Dot, &[0.0, 0.0], 2).unwrap();
         assert_eq!(dot.len(), 2);

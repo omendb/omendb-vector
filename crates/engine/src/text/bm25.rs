@@ -16,7 +16,7 @@
 
 use super::tokenizer::tokenize;
 use crate::index::{Hit, Metric};
-use crate::records::Record;
+use crate::records::{ExternalId, Record};
 use std::collections::HashMap;
 
 pub const K1: f32 = 1.2;
@@ -147,27 +147,27 @@ impl Postings {
 /// merge): one postings set over ALL live docs, exact BM25. The
 /// store's merged per-segment results approximate this; the
 /// acceptance test bounds the gap on real-shaped data.
-pub fn exact_text_top_k(records: &[&Record], query: &str, k: usize) -> Vec<(u64, f32)> {
+pub fn exact_text_top_k(records: &[&Record], query: &str, k: usize) -> Vec<(ExternalId, f32)> {
     let texts: Vec<Option<&str>> = records.iter().map(|r| r.text.as_deref()).collect();
     let postings = Postings::build(texts);
-    let ids: Vec<u64> = records.iter().map(|r| r.external_id).collect();
+    let ids: Vec<ExternalId> = records.iter().map(|r| r.external_id.clone()).collect();
     postings
         .top_k(query, k, &|_| true)
         .into_iter()
-        .map(|(d, s)| (ids[d as usize], s))
+        .map(|(d, s)| (ids[d as usize].clone(), s))
         .collect()
 }
 
 /// Text hits reuse `Hit` so the planner fuses text and vectors in
 /// one shape. Metric is meaningless for text; seq carries the doc's
 /// WAL seq.
-pub fn hits_from(scores: Vec<(u64, f32)>, seqs: &dyn Fn(u64) -> u64) -> Vec<Hit> {
+pub fn hits_from(scores: Vec<(ExternalId, f32)>, seqs: &dyn Fn(&ExternalId) -> u64) -> Vec<Hit> {
     scores
         .into_iter()
         .map(|(id, score)| Hit {
-            external_id: id,
+            external_id: id.clone(),
             score,
-            seq: seqs(id),
+            seq: seqs(&id),
         })
         .collect()
 }
@@ -218,7 +218,7 @@ mod tests {
         ]);
         // "omendb" appears only in doc 1 → highest IDF; doc 1 must win.
         let top = p.top_k("omendb", 3, &|_| true);
-        assert_eq!(top[0].0, 1);
+        assert_eq!(top[0].0, 1u32);
         // "install" everywhere: doc 2 has tf 3 but no length
         // advantage after norm; scores must all be positive.
         let top2 = p.top_k("install", 3, &|_| true);
@@ -269,10 +269,10 @@ mod tests {
         ];
         let refs: Vec<&Record> = rs.iter().collect();
         let top = exact_text_top_k(&refs, "quick", 3);
-        assert_eq!(top[0].0, 3); // highest tf of the rare term
+        assert_eq!(top[0].0, ExternalId::Int(3)); // highest tf of the rare term
         assert!(top[0].1 > top[1].1);
         // "dog" appears once → id 2 first
         let top2 = exact_text_top_k(&refs, "dog", 3);
-        assert_eq!(top2[0].0, 2);
+        assert_eq!(top2[0].0, ExternalId::Int(2));
     }
 }

@@ -10,13 +10,14 @@
 
 use omendb_vector_engine::filter::{Filter, Num, Predicate};
 use omendb_vector_engine::index::{HnswConfig, Metric};
+use omendb_vector_engine::records::ExternalId;
 use omendb_vector_engine::records::{MetaValue, Record};
 use omendb_vector_engine::store::{IndexBackend, Store};
 use omendb_vector_engine::EngineError;
+use pyo3::create_exception;
 use pyo3::exceptions::PyValueError;
 use pyo3::prelude::*;
 use pyo3::types::PyAny;
-use pyo3::create_exception;
 
 create_exception!(omendb_vector, VectorEngineError, PyValueError);
 
@@ -40,7 +41,13 @@ fn parse_metric(s: &str) -> PyResult<Metric> {
     }
 }
 
-fn parse_backend(s: &str, m: usize, m0: usize, ef_construction: usize, ef_search: usize) -> PyResult<IndexBackend> {
+fn parse_backend(
+    s: &str,
+    m: usize,
+    m0: usize,
+    ef_construction: usize,
+    ef_search: usize,
+) -> PyResult<IndexBackend> {
     match s {
         "exact" => Ok(IndexBackend::Exact),
         "hnsw" => Ok(IndexBackend::Hnsw(HnswConfig {
@@ -85,9 +92,7 @@ fn from_meta_value(v: &MetaValue) -> PyResult<Py<PyAny>> {
             MetaValue::Bool(b) => {
                 // PyBool::new borrows; to_owned() gives a Bound we
                 // can move into Py<PyAny>.
-                pyo3::types::PyBool::new(py, *b)
-                    .to_owned()
-                    .into_any()
+                pyo3::types::PyBool::new(py, *b).to_owned().into_any()
             }
             MetaValue::Str(s) => s.into_pyobject(py)?.into_any(),
             MetaValue::Bytes(b) => b.into_pyobject(py)?.into_any(),
@@ -148,19 +153,64 @@ fn parse_num(v: &Bound<'_, PyAny>) -> PyResult<Num> {
     }
 }
 
-/// One search hit: (external_id, score, seq).
-#[pyclass(get_all)]
+/// One search hit: id (int or str), score, seq.
+#[pyclass(skip_from_py_object)]
 #[derive(Clone)]
 struct PyHit {
-    external_id: u64,
+    external_id: ExternalId,
     score: f32,
     seq: u64,
 }
 
 #[pymethods]
 impl PyHit {
+    #[getter]
+    fn id(&self) -> pyo3::Py<pyo3::PyAny> {
+        Python::attach(|py| id_to_py(py, &self.external_id))
+    }
+    #[getter]
+    fn score(&self) -> f32 {
+        self.score
+    }
+    #[getter]
+    fn seq(&self) -> u64 {
+        self.seq
+    }
     fn __repr__(&self) -> String {
-        format!("Hit(id={}, score={:.4}, seq={})", self.external_id, self.score, self.seq)
+        format!(
+            "Hit(id={}, score={:.4}, seq={})",
+            self.external_id, self.score, self.seq
+        )
+    }
+}
+
+/// Python id -> ExternalId: int or str only (bool rejected — Python
+/// bools are ints; an accidental True must not lock Int silently... it
+/// would; but reject None).
+fn py_to_id(v: Bound<'_, PyAny>) -> PyResult<ExternalId> {
+    if let Ok(i) = v.extract::<i64>() {
+        if i < 0 {
+            return Err(PyValueError::new_err("integer ids must be non-negative"));
+        }
+        return Ok(ExternalId::Int(i as u64));
+    }
+    if let Ok(st) = v.extract::<String>() {
+        return Ok(ExternalId::Str(st));
+    }
+    Err(PyValueError::new_err("id must be int or str"))
+}
+
+/// ExternalId -> Python object (int or str).
+fn id_to_py(py: Python<'_>, id: &ExternalId) -> pyo3::Py<pyo3::PyAny> {
+    match id {
+        ExternalId::Int(v) => v.into_pyobject(py).unwrap().into_any().unbind(),
+        ExternalId::Str(s) => s
+            .as_str()
+            .into_pyobject(py)
+            .unwrap()
+            .into_any()
+            .unbind()
+            .into(),
     }
 }
 
@@ -193,7 +243,13 @@ impl PyStore {
         hnsw_ef_search: usize,
     ) -> PyResult<(Self, PyRecovery)> {
         let m = parse_metric(metric)?;
-        let b = parse_backend(backend, hnsw_m, hnsw_m0, hnsw_ef_construction, hnsw_ef_search)?;
+        let b = parse_backend(
+            backend,
+            hnsw_m,
+            hnsw_m0,
+            hnsw_ef_construction,
+            hnsw_ef_search,
+        )?;
         // HNSW graphs are single-metric: align the config metric.
         let b = match b {
             IndexBackend::Hnsw(mut cfg) => {
@@ -218,11 +274,12 @@ impl PyStore {
     #[pyo3(signature = (id, vector, text = None, meta = None))]
     fn upsert(
         &mut self,
-        id: u64,
+        id: Bound<'_, PyAny>,
         vector: Vec<f32>,
         text: Option<String>,
         meta: Option<Bound<'_, PyAny>>,
     ) -> PyResult<u64> {
+        let id = py_to_id(id)?;
         let mut r = Record::new(id, vector);
         if let Some(t) = text {
             r = r.with_text(t);
@@ -239,7 +296,8 @@ impl PyStore {
     }
 
     /// Delete (tombstone) an id. Unknown/dead ids raise ValueError.
-    fn delete(&mut self, id: u64) -> PyResult<u64> {
+    fn delete(&mut self, id: Bound<'_, PyAny>) -> PyResult<u64> {
+        let id = py_to_id(id)?;
         self.inner.delete(id).map_err(engine_err)
     }
 
@@ -266,13 +324,14 @@ impl PyStore {
     }
 
     /// Fetch a live record as a dict, or None.
-    fn get(&self, id: u64) -> PyResult<Option<Py<PyAny>>> {
-        let Some(r) = self.inner.get(id) else {
+    fn get(&self, id: Bound<'_, PyAny>) -> PyResult<Option<Py<PyAny>>> {
+        let id = py_to_id(id)?;
+        let Some(r) = self.inner.get(&id) else {
             return Ok(None);
         };
         let obj = Python::attach(|py| -> PyResult<Py<PyAny>> {
             let dict = pyo3::types::PyDict::new(py);
-            dict.set_item("external_id", r.external_id)?;
+            dict.set_item("external_id", id_to_py(py, &r.external_id))?;
             dict.set_item("vector", r.vector.clone())?;
             dict.set_item("text", r.text.clone())?;
             dict.set_item("norm", r.norm)?;
@@ -315,7 +374,9 @@ impl PyStore {
         let hits = match filters {
             Some(specs) => {
                 let f = build_filter(specs)?;
-                self.inner.filtered_exact_top_k(m, &query, k, &f).map_err(engine_err)?
+                self.inner
+                    .filtered_exact_top_k(m, &query, k, &f)
+                    .map_err(engine_err)?
             }
             None => self.inner.exact_top_k(m, &query, k).map_err(engine_err)?,
         };
@@ -355,7 +416,10 @@ impl PyStore {
     ) -> PyResult<Vec<PyHit>> {
         let metric = parse_metric(vector_metric)?;
         let m = vector_query.as_deref().map(|q| (q, metric));
-        let hits = self.inner.hybrid_search_rrf(m, text_query.as_deref(), k, window).map_err(engine_err)?;
+        let hits = self
+            .inner
+            .hybrid_search_rrf(m, text_query.as_deref(), k, window)
+            .map_err(engine_err)?;
         Ok(hits
             .into_iter()
             .map(|h| PyHit {

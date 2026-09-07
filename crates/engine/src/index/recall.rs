@@ -51,7 +51,8 @@ pub fn recall_at_k(
     for q in queries {
         let want = oracle.search(metric, q, k)?;
         let got = candidate.search(metric, q, k)?;
-        let want_ids: std::collections::HashSet<u64> = want.iter().map(|h| h.external_id).collect();
+        let want_ids: std::collections::HashSet<&crate::records::ExternalId> =
+            want.iter().map(|h| &h.external_id).collect();
         let overlap = got
             .iter()
             .filter(|h| want_ids.contains(&h.external_id))

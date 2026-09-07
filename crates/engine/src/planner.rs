@@ -30,28 +30,30 @@ pub fn rrf_fuse(paths: &[PathHits], k: usize, rrf_k: u32) -> Vec<Hit> {
         return Vec::new();
     }
     // id -> (best fused score, representative hit for seq)
-    let mut fused: std::collections::HashMap<u64, f64> = std::collections::HashMap::new();
+    let mut fused: std::collections::HashMap<crate::records::ExternalId, f64> =
+        std::collections::HashMap::new();
     for path in paths {
         // Rank 0 is the best hit (paths arrive sorted best-first).
         // RRF is rank-only: every hit in the caller's window
         // contributes; window sizing is the caller's contract.
         for (rank, hit) in path.iter().enumerate() {
-            *fused.entry(hit.external_id).or_insert(0.0) +=
+            *fused.entry(hit.external_id.clone()).or_insert(0.0) +=
                 1.0 / (rrf_k as f64 + rank as f64 + 1.0);
         }
     }
     let mut out: Vec<Hit> = Vec::with_capacity(fused.len());
     // Reproduce per-id seq by looking the id up in the paths (first
     // occurrence wins; seq is the same record).
-    let mut seqs: std::collections::HashMap<u64, u64> = std::collections::HashMap::new();
+    let mut seqs: std::collections::HashMap<crate::records::ExternalId, u64> =
+        std::collections::HashMap::new();
     for path in paths {
         for hit in path {
-            seqs.entry(hit.external_id).or_insert(hit.seq);
+            seqs.entry(hit.external_id.clone()).or_insert(hit.seq);
         }
     }
     for (id, score) in fused {
         out.push(Hit {
-            external_id: id,
+            external_id: id.clone(),
             score: score as f32,
             seq: seqs.get(&id).copied().unwrap_or(0),
         });
@@ -69,10 +71,11 @@ pub fn rrf_fuse(paths: &[PathHits], k: usize, rrf_k: u32) -> Vec<Hit> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::records::ExternalId;
 
     fn hit(id: u64, score: f32) -> Hit {
         Hit {
-            external_id: id,
+            external_id: id.into(),
             score,
             seq: id,
         }
@@ -83,11 +86,11 @@ mod tests {
         let a = vec![hit(1, 0.9), hit(2, 0.8), hit(3, 0.7)];
         let b = vec![hit(1, 5.0), hit(3, 4.0), hit(2, 3.0)];
         let fused = rrf_fuse(&[a, b], 3, RRF_K);
-        assert_eq!(fused[0].external_id, 1);
+        assert_eq!(fused[0].external_id, ExternalId::Int(1));
         // 2 vs 3: 2 is rank1 in a, rank2 in b => 1/62+1/63;
         // 3 is rank2 in a, rank1 in b => 1/63+1/62 — tie! id asc wins.
-        assert_eq!(fused[1].external_id, 2);
-        assert_eq!(fused[2].external_id, 3);
+        assert_eq!(fused[1].external_id, ExternalId::Int(2));
+        assert_eq!(fused[2].external_id, ExternalId::Int(3));
     }
 
     #[test]
@@ -95,8 +98,8 @@ mod tests {
         let a = vec![hit(5, 1.0), hit(4, 0.9), hit(3, 0.8), hit(2, 0.7)];
         let fused = rrf_fuse(&[a], 2, RRF_K);
         assert_eq!(fused.len(), 2);
-        assert_eq!(fused[0].external_id, 5);
-        assert_eq!(fused[1].external_id, 4);
+        assert_eq!(fused[0].external_id, ExternalId::Int(5));
+        assert_eq!(fused[1].external_id, ExternalId::Int(4));
     }
 
     #[test]
@@ -105,8 +108,8 @@ mod tests {
         let b = vec![hit(9, 5.0), hit(1, 4.0)];
         let fused = rrf_fuse(&[a, b], 5, RRF_K);
         // 1: 1/61 + 1/62 > 9: 1/61
-        assert_eq!(fused[0].external_id, 1);
-        assert_eq!(fused[1].external_id, 9);
+        assert_eq!(fused[0].external_id, ExternalId::Int(1));
+        assert_eq!(fused[1].external_id, ExternalId::Int(9));
     }
 
     #[test]
@@ -115,8 +118,8 @@ mod tests {
         let b = vec![hit(3, 1.0)];
         let fused = rrf_fuse(&[a, b], 2, RRF_K);
         // Same fused score: smaller id first (deterministic).
-        assert_eq!(fused[0].external_id, 3);
-        assert_eq!(fused[1].external_id, 7);
+        assert_eq!(fused[0].external_id, ExternalId::Int(3));
+        assert_eq!(fused[1].external_id, ExternalId::Int(7));
     }
 
     #[test]
@@ -143,8 +146,8 @@ mod tests {
         let b = vec![hit(2, 1.0), hit(1, 0.5)];
         let f1 = rrf_fuse(&[a, b.clone()], 2, RRF_K);
         let f2 = rrf_fuse(&[a_scaled, b], 2, RRF_K);
-        let ids1: Vec<u64> = f1.iter().map(|h| h.external_id).collect();
-        let ids2: Vec<u64> = f2.iter().map(|h| h.external_id).collect();
+        let ids1: Vec<ExternalId> = f1.iter().map(|h| h.external_id.clone()).collect();
+        let ids2: Vec<ExternalId> = f2.iter().map(|h| h.external_id.clone()).collect();
         assert_eq!(ids1, ids2);
         // And their fused scores are equal (rank-only).
         for (h1, h2) in f1.iter().zip(f2.iter()) {

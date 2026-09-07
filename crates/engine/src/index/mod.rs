@@ -23,6 +23,7 @@ pub use hnsw::{HnswConfig, HnswIndex};
 pub use recall::{oracle_of, recall_at_k, RecallReport};
 
 use crate::error::{EngineError, EngineResult};
+use crate::records::ExternalId;
 
 /// Distance/similarity metric. Higher score = better everywhere (L2
 /// is negated squared distance).
@@ -36,10 +37,31 @@ pub enum Metric {
     L2,
 }
 
+impl Metric {
+    /// Stable kind byte persisted in the manifest (format v2).
+    pub fn kind_byte(self) -> u8 {
+        match self {
+            Metric::Dot => 0,
+            Metric::Cosine => 1,
+            Metric::L2 => 2,
+        }
+    }
+
+    /// Inverse of `kind_byte`; unknown bytes are None.
+    pub fn from_kind_byte(b: u8) -> Option<Self> {
+        match b {
+            0 => Some(Metric::Dot),
+            1 => Some(Metric::Cosine),
+            2 => Some(Metric::L2),
+            _ => None,
+        }
+    }
+}
+
 /// Ranked hit.
 #[derive(Debug, Clone, PartialEq)]
 pub struct Hit {
-    pub external_id: u64,
+    pub external_id: ExternalId,
     pub score: f32,
     pub seq: u64,
 }
@@ -48,15 +70,15 @@ pub struct Hit {
 /// full-dim vector.
 #[derive(Debug, Clone)]
 pub struct IndexedVector {
-    pub external_id: u64,
+    pub external_id: ExternalId,
     pub seq: u64,
     pub vector: Vec<f32>,
 }
 
 impl IndexedVector {
-    pub fn new(external_id: u64, seq: u64, vector: Vec<f32>) -> Self {
+    pub fn new(external_id: impl Into<ExternalId>, seq: u64, vector: Vec<f32>) -> Self {
         IndexedVector {
-            external_id,
+            external_id: external_id.into(),
             seq,
             vector,
         }

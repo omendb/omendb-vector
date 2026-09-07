@@ -413,7 +413,7 @@ impl HnswIndex {
             .iter()
             .filter_map(|iv| {
                 score(metric, query, &iv.vector).ok().map(|s| Hit {
-                    external_id: iv.external_id,
+                    external_id: iv.external_id.clone(),
                     score: s,
                     seq: iv.seq,
                 })
@@ -475,7 +475,7 @@ impl VectorIndex for HnswIndex {
                 // exactly (including prefix-dim handling); a zero-norm
                 // cosine record drops out here.
                 score(metric, query, &iv.vector).ok().map(|s| Hit {
-                    external_id: iv.external_id,
+                    external_id: iv.external_id.clone(),
                     score: s,
                     seq: iv.seq,
                 })
@@ -495,6 +495,7 @@ impl VectorIndex for HnswIndex {
 mod tests {
     use super::*;
     use crate::index::recall::{oracle_of, recall_at_k};
+    use crate::records::ExternalId;
 
     /// Deterministic random vectors for tests.
     fn rand_vecs(n: usize, d: usize, seed: u64) -> Vec<IndexedVector> {
@@ -534,8 +535,12 @@ mod tests {
             let got = idx.search(Metric::L2, &q, 5).unwrap();
             let want = oracle.search(Metric::L2, &q, 5).unwrap();
             assert_eq!(
-                got.iter().map(|h| h.external_id).collect::<Vec<_>>(),
-                want.iter().map(|h| h.external_id).collect::<Vec<_>>(),
+                got.iter()
+                    .map(|h| h.external_id.clone())
+                    .collect::<Vec<_>>(),
+                want.iter()
+                    .map(|h| h.external_id.clone())
+                    .collect::<Vec<_>>(),
                 "query {q:?}"
             );
         }
@@ -606,8 +611,12 @@ mod tests {
         let got = idx.search(Metric::Dot, &q, 5).unwrap();
         let want = oracle.search(Metric::Dot, &q, 5).unwrap();
         assert_eq!(
-            got.iter().map(|h| h.external_id).collect::<Vec<_>>(),
-            want.iter().map(|h| h.external_id).collect::<Vec<_>>()
+            got.iter()
+                .map(|h| h.external_id.clone())
+                .collect::<Vec<_>>(),
+            want.iter()
+                .map(|h| h.external_id.clone())
+                .collect::<Vec<_>>()
         );
     }
 
@@ -635,8 +644,12 @@ mod tests {
         let got = idx.search(Metric::L2, &[0.7], 4).unwrap();
         let want = oracle.search(Metric::L2, &[0.7], 4).unwrap();
         assert_eq!(
-            got.iter().map(|h| h.external_id).collect::<Vec<_>>(),
-            want.iter().map(|h| h.external_id).collect::<Vec<_>>()
+            got.iter()
+                .map(|h| h.external_id.clone())
+                .collect::<Vec<_>>(),
+            want.iter()
+                .map(|h| h.external_id.clone())
+                .collect::<Vec<_>>()
         );
     }
 
@@ -680,7 +693,7 @@ mod tests {
                 30,
             )
             .unwrap();
-        assert!(got.iter().all(|h| h.external_id != 999));
+        assert!(got.iter().all(|h| h.external_id != ExternalId::Int(999)));
         assert!(!got.is_empty());
     }
 

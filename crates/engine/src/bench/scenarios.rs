@@ -93,7 +93,8 @@ pub fn bench_single_query(
     for q in recall_queries {
         let got = s.search(metric, q, k, k).expect("query");
         let want = s.exact_top_k(metric, q, k).expect("oracle");
-        let want_ids: std::collections::HashSet<u64> = want.iter().map(|h| h.external_id).collect();
+        let want_ids: std::collections::HashSet<&crate::records::ExternalId> =
+            want.iter().map(|h| &h.external_id).collect();
         let overlap = got
             .iter()
             .filter(|h| want_ids.contains(&h.external_id))

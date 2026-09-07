@@ -1,19 +1,21 @@
 //! Canonical records: the sole mutation authority for the store.
 //!
-//! A record carries a stable external id (u64, rowid-style), a full-dim
-//! F32 vector, optional text, and typed metadata. Lifecycle states are
-//! live/tombstone (superseded is reserved in the format but never
-//! emitted in v0: an upsert shadows the prior version by external id).
+//! A record carries a stable external id (int or string; the kind is
+//! locked per collection at first write), a full-dim F32 vector,
+//! optional text, and typed metadata. Lifecycle states are live/
+//! tombstone (superseded is reserved in the format but never emitted
+//! in v0: an upsert shadows the prior version by external id).
 //! Vectors must be finite; per-collection dim is fixed, and queries may
 //! address a prefix dim <= the stored dim (Matryoshka prefix
 //! coherence).
 //!
 //! Binary payload layout (all little-endian), shared by the WAL and
-//! segment record codecs:
+//! segment record codecs (format v2):
 //!
 //! ```text
 //! u8  lifecycle       (0 live, 1 tombstone, 2 superseded [reserved])
-//! u64 external_id
+//! u8  id_kind        (0 int, 1 string)                      [v2]
+//! u64 external_id (int) | u16 len + bytes (string)
 //! u16 dim             (stored dimensionality of this record)
 //! f32 x dim           (vector, finite)
 //! u32 norm_bits       (IEEE-754 bits of full-dim L2 norm; 0xFFFFFFFF = untracked)
@@ -28,6 +30,78 @@
 //! switches to a schema'd format (see codec.rs).
 
 use crate::error::{EngineError, EngineResult};
+
+/// External record id: integer (rowid-style) or string. The kind is
+/// fixed per collection at the first write, like dim-locking: mixed
+/// kinds in one store are a schema error, not a silent coercion.
+/// String ids are stored first-class in the format (never hashed —
+/// hash-mapping has silent-collision risk and forfeits the id).
+#[derive(Debug, Clone, PartialEq, Eq, Hash, PartialOrd, Ord)]
+pub enum ExternalId {
+    Int(u64),
+    Str(String),
+}
+
+impl ExternalId {
+    /// The id kind byte used in the record payload.
+    fn kind_byte(&self) -> u8 {
+        match self {
+            ExternalId::Int(_) => 0,
+            ExternalId::Str(_) => 1,
+        }
+    }
+
+    fn encode_id(&self, out: &mut Vec<u8>) {
+        match self {
+            ExternalId::Int(v) => out.extend_from_slice(&v.to_le_bytes()),
+            ExternalId::Str(s) => {
+                out.extend_from_slice(&(s.len() as u16).to_le_bytes());
+                out.extend_from_slice(s.as_bytes());
+            }
+        }
+    }
+
+    fn decode_id(buf: &[u8], off: &mut usize) -> EngineResult<Self> {
+        match take_u8(buf, off)? {
+            0 => Ok(ExternalId::Int(take_u64(buf, off)?)),
+            1 => {
+                let len = take_u16(buf, off)? as usize;
+                let bytes = take_slice(buf, off, len)?;
+                let s = String::from_utf8(bytes.to_vec())
+                    .map_err(|_| EngineError::Codec("invalid utf-8 in id string".into()))?;
+                Ok(ExternalId::Str(s))
+            }
+            other => Err(EngineError::Codec(format!("bad id kind byte {other}"))),
+        }
+    }
+}
+
+impl std::fmt::Display for ExternalId {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            ExternalId::Int(v) => write!(f, "{v}"),
+            ExternalId::Str(s) => write!(f, "{s}"),
+        }
+    }
+}
+
+impl From<u64> for ExternalId {
+    fn from(v: u64) -> Self {
+        ExternalId::Int(v)
+    }
+}
+
+impl From<&str> for ExternalId {
+    fn from(s: &str) -> Self {
+        ExternalId::Str(s.into())
+    }
+}
+
+impl From<String> for ExternalId {
+    fn from(s: String) -> Self {
+        ExternalId::Str(s)
+    }
+}
 
 /// Record lifecycle.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -113,7 +187,7 @@ impl MetaValue {
 /// Canonical record.
 #[derive(Debug, Clone, PartialEq)]
 pub struct Record {
-    pub external_id: u64,
+    pub external_id: ExternalId,
     pub vector: Vec<f32>,
     /// L2 norm of `vector` when tracked (explicit for cosine/IP).
     pub norm: Option<f32>,
@@ -129,10 +203,18 @@ const NO_TEXT: u32 = 0xFFFF_FFFF;
 const NO_NORM: u32 = 0xFFFF_FFFF;
 
 impl Record {
+    /// Id kind of this record's external id.
+    pub fn id_kind(&self) -> crate::segments::IdKind {
+        match self.external_id {
+            ExternalId::Int(_) => crate::segments::IdKind::Int,
+            ExternalId::Str(_) => crate::segments::IdKind::Str,
+        }
+    }
+
     /// Create a live record; norm is untracked until computed.
-    pub fn new(external_id: u64, vector: Vec<f32>) -> Self {
+    pub fn new(external_id: impl Into<ExternalId>, vector: Vec<f32>) -> Self {
         Record {
-            external_id,
+            external_id: external_id.into(),
             vector,
             norm: None,
             text: None,
@@ -181,7 +263,8 @@ impl Record {
         }
         let mut out = Vec::with_capacity(24 + self.vector.len() * 4);
         out.push(self.lifecycle as u8);
-        out.extend_from_slice(&self.external_id.to_le_bytes());
+        out.push(self.external_id.kind_byte());
+        self.external_id.encode_id(&mut out);
         out.extend_from_slice(&(self.vector.len() as u16).to_le_bytes());
         for v in &self.vector {
             if !v.is_finite() {
@@ -227,7 +310,7 @@ impl Record {
             2 => Lifecycle::Superseded,
             other => return Err(EngineError::Codec(format!("bad lifecycle byte {other}"))),
         };
-        let external_id = take_u64(buf, &mut off)?;
+        let external_id = ExternalId::decode_id(buf, &mut off)?;
         let dim = take_u16(buf, &mut off)? as usize;
         if buf.len() < off + dim * 4 {
             return Err(EngineError::Codec("vector truncated".into()));
@@ -354,6 +437,31 @@ mod tests {
     }
 
     #[test]
+    fn string_id_round_trip() {
+        let r = Record::new("doc-42", vec![0.1, 0.2]).with_norm();
+        let back = Record::decode(&r.encode().unwrap()).unwrap();
+        assert_eq!(r.external_id, ExternalId::Str("doc-42".into()));
+        assert_eq!(r, back);
+    }
+
+    #[test]
+    fn id_kinds_dont_cross_decode() {
+        // An int-kind payload never decodes as string-kind and vice
+        // versa; the kind byte is authoritative.
+        let int_rec = Record::new(7u64, vec![0.5]);
+        let mut bytes = int_rec.encode().unwrap();
+        bytes[1] = 1; // lie: claim string kind
+        assert!(Record::decode(&bytes).is_err());
+    }
+
+    #[test]
+    fn empty_string_id_round_trip() {
+        let r = Record::new(String::new(), vec![0.5]);
+        let back = Record::decode(&r.encode().unwrap()).unwrap();
+        assert_eq!(back.external_id, ExternalId::Str("".into()));
+    }
+
+    #[test]
     fn tombstone_round_trip() {
         let r = sample().tombstone();
         let back = Record::decode(&r.encode().unwrap()).unwrap();
@@ -427,10 +535,10 @@ mod tests {
     #[test]
     fn decode_rejects_nonfinite_norm_payload() {
         // hand-craft a payload with an inf norm where the field lives:
-        // lifecycle(1) + id(8) + dim(2) + dim*4 vector bytes
+        // lifecycle(1) + id_kind(1) + id(8) + dim(2) + dim*4 vector bytes
         let r = Record::new(11, vec![0.5f32; 2]);
         let mut bytes = r.encode().unwrap();
-        let norm_off = 1 + 8 + 2 + 2 * 4;
+        let norm_off = 1 + 1 + 8 + 2 + 2 * 4;
         bytes[norm_off..norm_off + 4].copy_from_slice(&f32::INFINITY.to_bits().to_le_bytes());
         assert!(matches!(Record::decode(&bytes), Err(EngineError::Codec(_))));
     }

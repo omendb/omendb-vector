@@ -52,7 +52,7 @@ impl VectorIndex for ExactIndex {
             .iter()
             .filter_map(|iv| {
                 score(metric, query, &iv.vector).ok().map(|s| Hit {
-                    external_id: iv.external_id,
+                    external_id: iv.external_id.clone(),
                     score: s,
                     seq: iv.seq,
                 })
@@ -81,6 +81,7 @@ impl ExactIndex {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::records::ExternalId;
 
     fn iv(id: u64, seq: u64, v: Vec<f32>) -> IndexedVector {
         IndexedVector::new(id, seq, v)
@@ -95,8 +96,16 @@ mod tests {
             iv(4, 4, vec![-1.0, 0.0]),
         ]);
         let hits = idx.search(Metric::Dot, &[1.0, 0.0], 4).unwrap();
-        let ids: Vec<u64> = hits.iter().map(|h| h.external_id).collect();
-        assert_eq!(ids, vec![1, 2, 3, 4]);
+        let ids: Vec<_> = hits.iter().map(|h| &h.external_id).collect();
+        assert_eq!(
+            ids,
+            vec![
+                &ExternalId::Int(1),
+                &ExternalId::Int(2),
+                &ExternalId::Int(3),
+                &ExternalId::Int(4)
+            ]
+        );
         assert!(hits[0].score > hits[1].score);
     }
 
@@ -112,7 +121,7 @@ mod tests {
     fn prefix_dim_query() {
         let idx = ExactIndex::build([iv(1, 1, vec![1.0, 0.0, 9.0]), iv(2, 2, vec![0.0, 1.0, 9.0])]);
         let hits = idx.search(Metric::Dot, &[1.0], 2).unwrap();
-        assert_eq!(hits[0].external_id, 1); // only dim 0 counts
+        assert_eq!(hits[0].external_id, ExternalId::Int(1)); // only dim 0 counts
         assert!((hits[0].score - 1.0).abs() < 1e-6);
     }
 
@@ -130,7 +139,7 @@ mod tests {
         ]);
         let hits = idx.search(Metric::Cosine, &[1.0, 0.5], 2).unwrap();
         assert_eq!(hits.len(), 1);
-        assert_eq!(hits[0].external_id, 2);
+        assert_eq!(hits[0].external_id, ExternalId::Int(2));
     }
 
     #[test]
@@ -152,7 +161,7 @@ mod tests {
             iv(2, 2, vec![2.0, 2.0]), // dist^2 2
         ]);
         let hits = idx.search(Metric::L2, &[1.0, 1.0], 2).unwrap();
-        assert_eq!(hits[0].external_id, 1);
+        assert_eq!(hits[0].external_id, ExternalId::Int(1));
         assert!(hits[0].score >= hits[1].score);
         assert!((hits[1].score + 2.0).abs() < 1e-5);
     }
