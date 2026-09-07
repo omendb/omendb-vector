@@ -101,6 +101,43 @@ fn from_meta_value(v: &MetaValue) -> PyResult<Py<PyAny>> {
     })
 }
 
+/// Coerce a `where=` argument into a Filter. Accepted shapes:
+/// - None -> no filter
+/// - str -> SQL-subset string (filter::parse)
+/// - dict {field: value} -> AND of equalities (the 90% case)
+/// - list[dict] -> legacy predicate-dict form (build_filter)
+fn coerce_where(w: Option<Bound<'_, PyAny>>) -> PyResult<Filter> {
+    let Some(w) = w else {
+        return Ok(Filter::new());
+    };
+    if w.is_none() {
+        return Ok(Filter::new());
+    }
+    if let Ok(s) = w.extract::<String>() {
+        return omendb_vector_engine::filter::parse::parse_where(&s).map_err(engine_err);
+    }
+    if let Ok(d) = w.cast::<pyo3::types::PyDict>() {
+        if d.is_empty() {
+            return Ok(Filter::new());
+        }
+        // equality-dict form: AND of Eq predicates
+        let mut filter = Filter::new();
+        for (k, v) in d.iter() {
+            let field: String = k.extract()?;
+            let value = to_meta_value(v)?;
+            filter = filter.and(Predicate::Eq { field, value });
+        }
+        return Ok(filter);
+    }
+    // legacy list-of-predicate-dicts
+    if let Ok(items) = w.extract::<Vec<Bound<'_, PyAny>>>() {
+        return build_filter(items);
+    }
+    Err(PyValueError::new_err(
+        "where must be a dict, a SQL-subset string, or a list of predicate dicts",
+    ))
+}
+
 /// Build a `Filter` from a list of predicate dicts:
 /// `{"eq": {"field": ..., "value": ...}}`,
 /// `{"in": {"field": ..., "values": [...]}}`,
@@ -182,6 +219,28 @@ impl PyHit {
             self.external_id, self.score, self.seq
         )
     }
+}
+
+/// Record -> python dict (shared by get()); None when record absent
+/// maps to Python None.
+fn record_dict(
+    py: Python<'_>,
+    r: Option<omendb_vector_engine::records::Record>,
+) -> PyResult<Py<pyo3::PyAny>> {
+    let Some(r) = r else {
+        return Ok(py.None());
+    };
+    let dict = pyo3::types::PyDict::new(py);
+    dict.set_item("external_id", id_to_py(py, &r.external_id))?;
+    dict.set_item("vector", r.vector.clone())?;
+    dict.set_item("text", r.text.clone())?;
+    dict.set_item("norm", r.norm)?;
+    let meta = pyo3::types::PyDict::new(py);
+    for (k, v) in &r.meta {
+        meta.set_item(k, from_meta_value(v)?)?;
+    }
+    dict.set_item("meta", meta)?;
+    Ok(dict.into_any().unbind())
 }
 
 /// Python id -> ExternalId: int or str only (bool rejected — Python
@@ -269,8 +328,71 @@ impl PyStore {
         ))
     }
 
-    /// Upsert a record. Returns the assigned WAL seq. Not durable
-    /// until `commit()`.
+    /// The one write verb (v2): columnar batch, n>=1, keyed
+    /// last-wins (INSERT OR REPLACE, not append). Whole records:
+    /// omitted fields are not preserved. Returns the last WAL seq.
+    /// Not durable until commit (autocommit lands with the Client
+    /// facade).
+    #[pyo3(signature = (ids, vectors, text = None, metadata = None))]
+    fn add(
+        &mut self,
+        ids: Bound<'_, pyo3::types::PyList>,
+        vectors: Vec<Vec<f32>>,
+        text: Option<Vec<Option<String>>>,
+        metadata: Option<Vec<Option<Bound<'_, pyo3::types::PyDict>>>>,
+    ) -> PyResult<u64> {
+        let n = ids.len();
+        if n == 0 {
+            return Err(PyValueError::new_err("add requires at least one record"));
+        }
+        if vectors.len() != n {
+            return Err(PyValueError::new_err(format!(
+                "ids has {n} entries but vectors has {}",
+                vectors.len()
+            )));
+        }
+        if let Some(t) = &text {
+            if t.len() != n {
+                return Err(PyValueError::new_err(format!(
+                    "ids has {n} entries but text has {}",
+                    t.len()
+                )));
+            }
+        }
+        if let Some(m) = &metadata {
+            if m.len() != n {
+                return Err(PyValueError::new_err(format!(
+                    "ids has {n} entries but metadata has {}",
+                    m.len()
+                )));
+            }
+        }
+        let mut last = 0;
+        for i in 0..n {
+            let id = py_to_id(ids.get_item(i)?)?;
+            let vector = vectors[i].clone();
+            let mut r = Record::new(id, vector);
+            if let Some(ts) = &text {
+                if let Some(Some(t)) = ts.get(i) {
+                    r = r.with_text(t.clone());
+                }
+            }
+            if let Some(ms) = &metadata {
+                if let Some(Some(d)) = ms.get(i) {
+                    for (k, v) in d.iter() {
+                        let key: String = k.extract()?;
+                        let value = to_meta_value(v)?;
+                        r = r.with_meta(key, value);
+                    }
+                }
+            }
+            last = self.inner.upsert(r).map_err(engine_err)?;
+        }
+        Ok(last)
+    }
+
+    /// Legacy single-record write (alias of add with n=1 shape);
+    /// retained for pre-v2 callers during migration.
     #[pyo3(signature = (id, vector, text = None, meta = None))]
     fn upsert(
         &mut self,
@@ -295,15 +417,39 @@ impl PyStore {
         self.inner.upsert(r).map_err(engine_err)
     }
 
-    /// Delete (tombstone) an id. Unknown/dead ids raise ValueError.
-    fn delete(&mut self, id: Bound<'_, PyAny>) -> PyResult<u64> {
-        let id = py_to_id(id)?;
-        self.inner.delete(id).map_err(engine_err)
+    /// Delete (tombstone) ids — single id or list of ids (batch
+    /// shape). Unknown/dead ids raise ValueError. Returns last seq.
+    #[pyo3(signature = (ids))]
+    fn delete(&mut self, ids: Bound<'_, PyAny>) -> PyResult<u64> {
+        let list = ids.cast::<pyo3::types::PyList>()?;
+        if list.is_empty() {
+            return Err(PyValueError::new_err("delete requires at least one id"));
+        }
+        let mut last = 0;
+        for i in 0..list.len() {
+            let id = py_to_id(list.get_item(i)?)?;
+            last = self.inner.delete(id).map_err(engine_err)?;
+        }
+        Ok(last)
     }
 
     /// Commit barrier: fsync. Everything appended is now durable.
     fn commit(&mut self) -> PyResult<u64> {
         self.inner.commit().map_err(engine_err)
+    }
+
+    /// Rollback: discard unacked writes (truncate to last commit).
+    fn rollback(&mut self) -> PyResult<()> {
+        self.inner.rollback().map_err(engine_err)
+    }
+
+    /// Fix the collection metric (idempotent; conflicting metric
+    /// raises). v2: metric is connect-time state, this is what
+    /// omendb.connect threads through.
+    #[pyo3(signature = (metric))]
+    fn set_metric(&mut self, metric: &str) -> PyResult<()> {
+        let m = parse_metric(metric)?;
+        self.inner.set_metric(m).map_err(engine_err)
     }
 
     /// Checkpoint: seal live set into a segment, publish manifest,
@@ -323,26 +469,30 @@ impl PyStore {
         self.inner.len()
     }
 
-    /// Fetch a live record as a dict, or None.
-    fn get(&self, id: Bound<'_, PyAny>) -> PyResult<Option<Py<PyAny>>> {
-        let id = py_to_id(id)?;
-        let Some(r) = self.inner.get(&id) else {
-            return Ok(None);
-        };
-        let obj = Python::attach(|py| -> PyResult<Py<PyAny>> {
-            let dict = pyo3::types::PyDict::new(py);
-            dict.set_item("external_id", id_to_py(py, &r.external_id))?;
-            dict.set_item("vector", r.vector.clone())?;
-            dict.set_item("text", r.text.clone())?;
-            dict.set_item("norm", r.norm)?;
-            let meta = pyo3::types::PyDict::new(py);
-            for (k, v) in &r.meta {
-                meta.set_item(k, from_meta_value(v)?)?;
+    /// Fetch live records by ids (single id or list; batch-in,
+    /// batch-out, order-preserving, None for missing). Returns a
+    /// record dict or list of record dicts.
+    #[pyo3(signature = (ids))]
+    fn get(&self, ids: Bound<'_, PyAny>) -> PyResult<Py<PyAny>> {
+        let single = if let Ok(list) = ids.cast::<pyo3::types::PyList>() {
+            if list.len() == 1 {
+                let id = py_to_id(list.get_item(0)?)?;
+                Python::attach(|py| record_dict(py, self.inner.get(&id)))
+            } else {
+                let mut out = Vec::new();
+                for i in 0..list.len() {
+                    let id = py_to_id(list.get_item(i)?)?;
+                    out.push(Python::attach(|py| record_dict(py, self.inner.get(&id)))?);
+                }
+                Python::attach(|py| -> PyResult<Py<pyo3::PyAny>> {
+                    Ok(out.into_pyobject(py).unwrap().into_any().unbind())
+                })
             }
-            dict.set_item("meta", meta)?;
-            Ok(dict.into_any().unbind())
-        })?;
-        Ok(Some(obj))
+        } else {
+            let id = py_to_id(ids)?;
+            Python::attach(|py| record_dict(py, self.inner.get(&id)))
+        };
+        single
     }
 
     /// Exact flat scan (the correctness oracle).
@@ -360,25 +510,29 @@ impl PyStore {
             .collect())
     }
 
-    /// Backend search over segments + L0 (HNSW when configured).
-    #[pyo3(signature = (metric, query, k, window, filters = None))]
+    /// Dense vector search (exact oracle; HNSW backend when
+    /// configured). `where` filters pre-ranking: dict (AND of
+    /// equalities) or SQL-subset string. `metric` optional — the
+    /// collection's locked metric is the default.
+    #[pyo3(signature = (query, k, r#where = None, metric = None))]
     fn search(
         &self,
-        metric: &str,
         query: Vec<f32>,
         k: usize,
-        window: usize,
-        filters: Option<Vec<Bound<'_, PyAny>>>,
+        r#where: Option<Bound<'_, PyAny>>,
+        metric: Option<String>,
     ) -> PyResult<Vec<PyHit>> {
-        let m = parse_metric(metric)?;
-        let hits = match filters {
-            Some(specs) => {
-                let f = build_filter(specs)?;
-                self.inner
-                    .filtered_exact_top_k(m, &query, k, &f)
-                    .map_err(engine_err)?
-            }
-            None => self.inner.exact_top_k(m, &query, k).map_err(engine_err)?,
+        let m = match metric {
+            Some(s) => parse_metric(&s)?,
+            None => self.inner.metric().unwrap_or(Metric::L2),
+        };
+        let filter = coerce_where(r#where)?;
+        let hits = if filter.root.is_some() {
+            self.inner
+                .filtered_exact_top_k(m, &query, k, &filter)
+                .map_err(engine_err)?
+        } else {
+            self.inner.exact_top_k(m, &query, k).map_err(engine_err)?
         };
         Ok(hits
             .into_iter()
@@ -390,35 +544,51 @@ impl PyStore {
             .collect())
     }
 
-    /// BM25 text search.
-    fn text_search(&self, query: &str, k: usize) -> Vec<PyHit> {
-        self.inner
-            .text_search(query, k)
+    /// BM25 text search; `where=` filters candidates pre-scoring.
+    #[pyo3(signature = (query, k, r#where = None))]
+    fn text_search(
+        &self,
+        query: &str,
+        k: usize,
+        r#where: Option<Bound<'_, PyAny>>,
+    ) -> PyResult<Vec<PyHit>> {
+        let filter = coerce_where(r#where)?;
+        let hits = self
+            .inner
+            .text_search_filtered(query, k, &filter)
+            .map_err(engine_err)?;
+        Ok(hits
             .into_iter()
             .map(|h| PyHit {
                 external_id: h.external_id,
                 score: h.score,
                 seq: h.seq,
             })
-            .collect()
+            .collect())
     }
 
-    /// Hybrid RRF search: vector and/or text, both optional but at
-    /// least one required.
-    #[pyo3(signature = (k, window, vector_query = None, vector_metric = "l2", text_query = None))]
+    /// Hybrid RRF search: vector and/or text, at least one
+    /// required. `where` binds BOTH paths pre-fusion. `metric`
+    /// optional — the collection's locked metric is the default.
+    #[pyo3(signature = (k, window, vector_query = None, vector_metric = None, text_query = None, r#where = None))]
     fn hybrid_search(
         &self,
         k: usize,
         window: usize,
         vector_query: Option<Vec<f32>>,
-        vector_metric: &str,
+        vector_metric: Option<String>,
         text_query: Option<String>,
+        r#where: Option<Bound<'_, PyAny>>,
     ) -> PyResult<Vec<PyHit>> {
-        let metric = parse_metric(vector_metric)?;
+        let metric = match vector_metric {
+            Some(s) => parse_metric(&s)?,
+            None => self.inner.metric().unwrap_or(Metric::L2),
+        };
+        let filter = coerce_where(r#where)?;
         let m = vector_query.as_deref().map(|q| (q, metric));
         let hits = self
             .inner
-            .hybrid_search_rrf(m, text_query.as_deref(), k, window)
+            .hybrid_search_rrf_filtered(m, text_query.as_deref(), k, window, &filter)
             .map_err(engine_err)?;
         Ok(hits
             .into_iter()

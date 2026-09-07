@@ -73,10 +73,9 @@ def test_hnsw_backend_search(store_dir):
     hits = store.exact_search("l2", query, 5)
     assert len(hits) == 5
 
-    # filtered search
+    # filtered search: legacy predicate-dict list via where= (v2 form)
     f = [{"eq": {"field": "bucket", "value": 1}}]
-    # backend search uses filtered_exact_top_k when filters given
-    fhits = store.search("l2", query, 5, 5, filters=f)
+    fhits = store.search(query, 5, where=f, metric="l2")
     assert len(fhits) == 5
     # filtered: only ids with bucket == 1... need engine get to verify
     # (uses filtered_exact_top_k internally, oracle behavior)
@@ -156,8 +155,8 @@ def test_string_ids_end_to_end(tmp_path):
     except Exception:
         pass
 
-    # delete + checkpoint + reopen: kind and records persist
-    store.delete("doc-b")
+    # delete (batch shape) + checkpoint + reopen: kind and records persist
+    store.delete(["doc-b"])
     store.commit()
     store.checkpoint()
     store2, _ = Store.open(str(tmp_path / "db"))
@@ -169,3 +168,101 @@ def test_string_ids_end_to_end(tmp_path):
         assert False
     except Exception:
         pass
+
+
+# ---- v2 surface (docs/api-v2-draft.md) ----
+
+def test_v2_connect_and_add(tmp_path):
+    import omendb_vector as omendb
+
+    db = omendb.connect(str(tmp_path / "db"), metric="dot")
+    # columnar batch, n>=1: single = batch of 1
+    db.add([1, 2], [[1.0, 0.0], [0.0, 1.0]], text=[None, "hello world"])
+    db.commit()
+
+    assert db.get([1])["external_id"] == 1
+    assert db.get([1, 2])[1]["text"] == "hello world"
+
+    # keyed last-wins: re-add id 1 with a new vector
+    db.add([1], [[0.5, 0.5]])
+    db.commit()
+    assert db.get([1])["vector"] == [0.5, 0.5]
+    assert db.__len__() == 2
+
+
+def test_v2_where_dict_and_string(tmp_path):
+    import omendb_vector as omendb
+
+    db = omendb.connect(str(tmp_path / "db"), metric="dot")
+    db.add(
+        ["a", "b", "c"],
+        [[1.0, 0.0], [0.0, 1.0], [0.7, 0.7]],
+        text=["alpha", "beta", "gamma"],
+        metadata=[{"lang": "en", "year": 2023},
+                  {"lang": "fr", "year": 2024},
+                  {"lang": "en", "year": 2024}],
+    )
+    db.commit()
+
+    # dict form: AND of equalities
+    hits = db.search([1.0, 0.0], k=3, where={"lang": "en"})
+    assert sorted(h.id for h in hits) == ["a", "c"]
+
+    # string form: OR (engine AND-only planner routes exact; exact eval is oracle)
+    hits = db.search([1.0, 0.0], k=3, where="lang = 'en' OR year >= 2024")
+    assert {h.id for h in hits} == {"a", "b", "c"}
+
+    # string form with NOT + parens
+    hits = db.search([1.0, 0.0], k=3, where="(lang = 'fr' OR year = 2023) AND NOT year = 2023")
+    assert [h.id for h in hits] == ["b"]
+
+    # text search with where
+    hits = db.text_search("alpha", 5, where="year >= 2024")
+    assert hits == []  # 'alpha' is in record a (year 2023)
+
+    # hybrid with where
+    hits = db.hybrid_search(k=2, window=3, vector_query=[1.0, 0.0], text_query="beta",
+                           where={"lang": "fr"})
+    assert [h.id for h in hits] == ["b"]
+
+
+def test_v2_rollback_and_transaction_semantics(tmp_path):
+    import omendb_vector as omendb
+
+    db = omendb.connect(str(tmp_path / "db"))
+    db.add([1], [[0.1, 0.2]])
+    db.commit()
+    db.add([2], [[0.3, 0.4]])  # unacked
+
+    db.rollback()
+    assert db.__len__() == 1
+    assert db.get([2]) is None
+
+    # post-rollback commit cannot resurrect the rolled-back record
+    db.add([3], [[0.5, 0.6]])
+    db.commit()
+    assert db.__len__() == 2
+    assert db.get([2]) is None
+
+
+def test_v2_metric_locked_at_connect(tmp_path):
+    import omendb_vector as omendb
+
+    db = omendb.connect(str(tmp_path / "db"), metric="dot")
+    db.add([1], [[1.0, 0.0]])
+    db.commit()
+
+    # reopen via connect with the same metric: fine (idempotent)
+    db2 = omendb.connect(str(tmp_path / "db"), metric="dot")
+    assert db2.get([1])["external_id"] == 1
+
+    # conflicting metric on reopen: loud error
+    try:
+        omendb.connect(str(tmp_path / "db"), metric="l2")
+        assert False
+    except Exception:
+        pass
+
+    # search defaults to the locked collection metric
+    hits = db2.search([1.0, 0.0], k=1)
+    assert hits[0].id == 1
