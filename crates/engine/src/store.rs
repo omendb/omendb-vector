@@ -416,7 +416,7 @@ impl Store {
         // and repositions the append cursor at the barrier. (The
         // class-threaded open_with_class lands with the durable-fs
         // branch merge; the default class is today's behavior.)
-        let (wal, _recovery) = Wal::open(&self.wal.path())?;
+        let (wal, _recovery) = Wal::open(self.wal.path())?;
         self.wal = wal;
         Ok(())
     }
