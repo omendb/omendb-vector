@@ -592,6 +592,20 @@ impl Store {
     /// restricted to matching records — that equivalence is the
     /// acceptance test for every future filtered path (in-filter
     /// HNSW, bitmap indexes).
+    /// Filtered exact top-k from a where-string (SQL subset; see
+    /// `filter::parse`). Parse errors are loud — never a silent
+    /// match-everything.
+    pub fn where_exact_top_k(
+        &self,
+        metric: Metric,
+        query: &[f32],
+        k: usize,
+        where_str: &str,
+    ) -> EngineResult<Vec<Hit>> {
+        let filter = crate::filter::parse::parse_where(where_str)?;
+        self.filtered_exact_top_k(metric, query, k, &filter)
+    }
+
     pub fn filtered_exact_top_k(
         &self,
         metric: Metric,
@@ -1349,6 +1363,67 @@ mod tests {
         assert!(s.delete("other").is_err());
         s.delete(1).unwrap();
         assert_eq!(s.id_kind(), Some(IdKind::Int));
+    }
+
+    #[test]
+    fn where_string_equals_builder_filter() {
+        let dir = tmp_dir("wherestr");
+        let mut s = Store::open(&dir).unwrap().0;
+        let mk = |id: u64, year: i64, lang: &str| {
+            Record::new(id, vec![id as f32 * 0.1, 0.5])
+                .with_meta("year", crate::records::MetaValue::Int(year))
+                .with_meta("lang", crate::records::MetaValue::Str(lang.into()))
+        };
+        for (id, y, l) in [
+            (1, 2023, "en"),
+            (2, 2024, "en"),
+            (3, 2024, "fr"),
+            (4, 2025, "de"),
+        ] {
+            s.upsert(mk(id, y, l)).unwrap();
+        }
+        s.commit().unwrap();
+
+        // string dialect == builder == oracle-restricted for the same
+        // predicate set, including OR (which the builder expresses via
+        // the parsed filter itself).
+        let cases: Vec<(&str, Option<Filter>)> = vec![
+            ("lang = 'en'", None),
+            ("year >= 2024 AND lang != 'fr'", None),
+            ("lang = 'en' OR year = 2025", None),
+            ("NOT lang = 'en' AND year IS NOT NULL", None),
+        ];
+        for (i, (w, built_override)) in cases.iter().enumerate() {
+            let got = s
+                .where_exact_top_k(Metric::Dot, &[1.0, 0.5], 10, w)
+                .unwrap();
+            let builder_filter = match built_override {
+                Some(f) => f.clone(),
+                None => crate::filter::parse::parse_where(w).unwrap(), // builder==parse structurally here
+            };
+            let built = s
+                .filtered_exact_top_k(Metric::Dot, &[1.0, 0.5], 10, &builder_filter)
+                .unwrap();
+            let oracle: Vec<Hit> = s
+                .exact_top_k(Metric::Dot, &[1.0, 0.5], 10)
+                .unwrap()
+                .into_iter()
+                .filter(|h| {
+                    let r = s.get(&h.external_id).unwrap();
+                    crate::filter::parse::parse_where(w)
+                        .unwrap()
+                        .matches(&r)
+                        .unwrap()
+                })
+                .collect();
+            let ids = |v: &[Hit]| v.iter().map(|h| h.external_id.clone()).collect::<Vec<_>>();
+            assert_eq!(ids(&got), ids(&built), "case {i}: string != builder");
+            assert_eq!(
+                ids(&got),
+                ids(&oracle),
+                "case {i}: string != oracle-restricted"
+            );
+        }
     }
 
     #[test]

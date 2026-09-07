@@ -1,19 +1,23 @@
-//! Typed metadata predicates (v0: AND composition, exact evaluation).
+//! Typed metadata predicates + boolean composition (exact evaluation).
 //!
-//! A filter is a set of field predicates evaluated exactly against
-//! each record's metadata. This is the **oracle semantics** for
-//! filtered search; per-field indexes (equality inverted, range
+//! A filter is a boolean tree over field predicates, evaluated exactly
+//! against each record's metadata. This is the **oracle semantics**
+//! for filtered search; per-field indexes (equality inverted, range
 //! sorted, presence bitmaps — architecture §6) are the acceleration
 //! that lands with the benchmark harness, and they must reproduce
 //! this module's behavior exactly.
 //!
-//! v0 predicate set: `Eq`, `In`, `Range` (Int/Float), `Presence`.
+//! Predicate set: `Eq`, `In`, `Range` (Int/Float), `Presence`.
 //! `Range` on integers compares exactly when both bounds are `Int`;
 //! mixed Int/Float bounds promote to f64 — **exact only below 2^53**
 //! (documented precision boundary: i64 values beyond 2^53 lose exact
 //! f64 representation). NaN bounds are rejected loud, never
-//! silently-matching. OR composition is out of v0 (needed: ranked
-//! union merge order — deferred until a real query demands it).
+//! silently-matching. Boolean composition: full AND/OR/NOT (string
+//! dialect via `parse::parse_where`; disjunction-aware *acceleration*
+//! is deferred — exact per-record evaluation is the oracle every
+//! future planner path must reproduce).
+
+pub mod parse;
 
 use crate::error::{EngineError, EngineResult};
 use crate::records::{MetaValue, Record};
@@ -49,6 +53,14 @@ pub enum Predicate {
     Range { field: String, lo: Num, hi: Num },
     /// Field present (any value, including Bool(false)).
     Present { field: String },
+    /// Field absent. String-dialect `IS NULL`; the exact-inverse of
+    /// `Present` (oracle: missing IS NULL is true).
+    NotPresent { field: String },
+    /// Field does not equal this value — true when the field is
+    /// missing OR holds a different value (differs-from semantics,
+    /// the SQL practical reading of !=; NOT Eq is not equivalent
+    /// when the field is absent).
+    Neq { field: String, value: MetaValue },
 }
 
 impl Predicate {
@@ -107,6 +119,11 @@ impl Predicate {
                 }))
             }
             Predicate::Present { field } => Ok(record.meta.iter().any(|(k, _)| k == field)),
+            Predicate::NotPresent { field } => Ok(!record.meta.iter().any(|(k, _)| k == field)),
+            Predicate::Neq { field, value } => Ok(!record
+                .meta
+                .iter()
+                .any(|(k, v)| k == field && meta_eq(v, value))),
         }
     }
 }
@@ -142,10 +159,34 @@ fn meta_eq(a: &MetaValue, b: &MetaValue) -> bool {
     }
 }
 
-/// A filter: AND of predicates (empty filter = matches everything).
+/// Boolean node over predicates. The string dialect
+/// (`parse::parse_where`) builds the full tree; the builder API
+/// composes it left-to-right.
+#[derive(Debug, Clone, PartialEq)]
+pub enum BoolNode {
+    Leaf(Predicate),
+    And(Box<BoolNode>, Box<BoolNode>),
+    Or(Box<BoolNode>, Box<BoolNode>),
+    Not(Box<BoolNode>),
+}
+
+impl BoolNode {
+    /// Exact per-record evaluation — the oracle semantics.
+    pub fn matches(&self, record: &Record) -> EngineResult<bool> {
+        match self {
+            BoolNode::Leaf(p) => p.matches(record),
+            BoolNode::And(a, b) => Ok(a.matches(record)? && b.matches(record)?),
+            BoolNode::Or(a, b) => Ok(a.matches(record)? || b.matches(record)?),
+            BoolNode::Not(a) => Ok(!a.matches(record)?),
+        }
+    }
+}
+
+/// A filter: boolean tree over predicates (empty = matches
+/// everything).
 #[derive(Debug, Clone, Default, PartialEq)]
 pub struct Filter {
-    pub predicates: Vec<Predicate>,
+    pub root: Option<BoolNode>,
 }
 
 impl Filter {
@@ -153,19 +194,34 @@ impl Filter {
         Filter::default()
     }
 
+    /// Conjoin with a predicate (AND into the tree; right-deep).
     pub fn and(mut self, predicate: Predicate) -> Self {
-        self.predicates.push(predicate);
+        self.root = Some(match self.root {
+            None => BoolNode::Leaf(predicate),
+            Some(existing) => {
+                BoolNode::And(Box::new(existing), Box::new(BoolNode::Leaf(predicate)))
+            }
+        });
         self
     }
 
-    /// Does `record` satisfy every predicate?
-    pub fn matches(&self, record: &Record) -> EngineResult<bool> {
-        for p in &self.predicates {
-            if !p.matches(record)? {
-                return Ok(false);
-            }
+    /// Conjoin with another filter's tree (AND; right-deep).
+    pub fn and_filter(mut self, other: Filter) -> Self {
+        if let Some(o) = other.root {
+            self.root = Some(match self.root {
+                None => o,
+                Some(existing) => BoolNode::And(Box::new(existing), Box::new(o)),
+            });
         }
-        Ok(true)
+        self
+    }
+
+    /// Does `record` satisfy the whole tree?
+    pub fn matches(&self, record: &Record) -> EngineResult<bool> {
+        match &self.root {
+            None => Ok(true),
+            Some(node) => node.matches(record),
+        }
     }
 }
 
