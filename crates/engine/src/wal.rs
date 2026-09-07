@@ -48,6 +48,7 @@
 use crate::codec::{decode_frames, encode_frame, FrameKind};
 use crate::error::{EngineError, EngineResult};
 use crate::records::Record;
+use durable_fs::{fsync_dir, sync_file_all, SyncClass};
 use std::fs::{File, OpenOptions};
 use std::io::{Read, Seek, SeekFrom, Write};
 use std::path::{Path, PathBuf};
@@ -96,6 +97,10 @@ pub struct Wal {
     start_seq: u64,
     next_seq: u64,
     committed_seq: u64,
+    /// Barrier class for commit/create/truncate syncs. Selects the
+    /// syscall, never the barrier count (one sync per acked commit
+    /// under either class). DeviceBarrier default = today's behavior.
+    sync_class: SyncClass,
 }
 
 impl Wal {
@@ -105,8 +110,18 @@ impl Wal {
     /// frames are truncated away so the log ends at the last commit
     /// barrier. The returned `WalRecovery` describes what survived.
     pub fn open<P: AsRef<Path>>(path: P) -> EngineResult<(Wal, WalRecovery)> {
+        Wal::open_with_class(path, SyncClass::default())
+    }
+
+    /// Open with an explicit barrier class (threaded from store
+    /// config; the future `safety="normal"` tier selects
+    /// KernelBarrier).
+    pub fn open_with_class<P: AsRef<Path>>(
+        path: P,
+        sync_class: SyncClass,
+    ) -> EngineResult<(Wal, WalRecovery)> {
         let path = path.as_ref().to_path_buf();
-        let (mut file, recovery) = open_or_recover(&path)?;
+        let (mut file, recovery) = open_or_recover(&path, sync_class)?;
         // Position at the recovery point (end of last commit frame, or
         // the header) so appends continue from there.
         file.seek(SeekFrom::Start(recovery_valid_end(&recovery)))?;
@@ -116,6 +131,7 @@ impl Wal {
             start_seq: recovery.start_seq,
             next_seq: recovery.next_seq,
             committed_seq: recovery.committed_seq,
+            sync_class,
         };
         Ok((wal, recovery))
     }
@@ -143,7 +159,7 @@ impl Wal {
         let mut frame = Vec::with_capacity(FRAME_BASE + body.len());
         encode_frame(FrameKind::Commit, &body, &mut frame);
         self.file.write_all(&frame)?;
-        self.file.sync_all()?;
+        sync_file_all(&self.file, self.sync_class)?;
         self.next_seq += 1;
         self.committed_seq = seq;
         Ok(seq)
@@ -207,22 +223,10 @@ fn parse_header(buf: &[u8]) -> EngineResult<u64> {
     Ok(start_seq)
 }
 
-/// fsync the parent directory so a freshly created file's directory
-/// entry is durable.
-fn fsync_dir(path: &Path) -> EngineResult<()> {
-    let parent = match path.parent() {
-        Some(p) if !p.as_os_str().is_empty() => p.to_path_buf(),
-        _ => PathBuf::from("."),
-    };
-    let dir = File::open(&parent)?;
-    dir.sync_all()?;
-    Ok(())
-}
-
 /// Open (or create) the file and run recovery. Returns the handle and
 /// what was recovered. On any semantic corruption the file is left
 /// untouched and an error is returned.
-fn open_or_recover(path: &Path) -> EngineResult<(File, WalRecovery)> {
+fn open_or_recover(path: &Path, sync_class: SyncClass) -> EngineResult<(File, WalRecovery)> {
     let mut file = OpenOptions::new()
         .read(true)
         .write(true)
@@ -246,8 +250,8 @@ fn open_or_recover(path: &Path) -> EngineResult<(File, WalRecovery)> {
         let start_seq = FIRST_SEQ;
         file.seek(SeekFrom::Start(0))?;
         file.write_all(&header_bytes(start_seq))?;
-        file.sync_all()?;
-        fsync_dir(path)?;
+        sync_file_all(&file, sync_class)?;
+        fsync_dir(path.parent().unwrap_or(Path::new(".")))?;
         return Ok((
             file,
             WalRecovery {
@@ -328,7 +332,7 @@ fn open_or_recover(path: &Path) -> EngineResult<(File, WalRecovery)> {
         // commit barrier. This is what prevents post-crash appends from
         // resurrecting aborted records under a new commit.
         file.set_len(valid_end)?;
-        file.sync_all()?;
+        sync_file_all(&file, sync_class)?;
     }
 
     Ok((
@@ -593,6 +597,32 @@ mod tests {
         assert_eq!(recovery.records.len(), 0);
         assert_eq!(recovery.committed_seq, 0);
         assert_eq!(recovery.next_seq, FIRST_SEQ);
+    }
+
+    #[test]
+    fn sync_class_changes_syscall_not_contract() {
+        // Barrier-class contract (durable-fs): the class selects the
+        // syscall, never the barrier count or the ack semantics.
+        // Behavioral pin: a commit acked under either class is
+        // durable across reopen — exactly one sync per acked commit
+        // either way. Our WAL has no grouping, so the per-commit
+        // barrier shape is identical under both classes.
+        for class in [SyncClass::DeviceBarrier, SyncClass::KernelBarrier] {
+            let dir = tmp_dir("classcontract");
+            let path = dir.join("wal.log");
+            {
+                let (mut wal, _) = Wal::open_with_class(&path, class).unwrap();
+                wal.append(&Record::new(1, vec![0.5])).unwrap();
+                wal.commit().unwrap();
+                wal.append(&Record::new(2, vec![0.5])).unwrap();
+                wal.commit().unwrap();
+                // uncommitted tail: must vanish under either class
+                wal.append(&Record::new(3, vec![0.5])).unwrap();
+            }
+            let (_, recovery) = Wal::open_with_class(&path, class).unwrap();
+            assert_eq!(recovery.records.len(), 2, "acked commits survive");
+            assert_eq!(recovery.dropped_uncommitted, 1, "unacked tail drops");
+        }
     }
 
     #[test]

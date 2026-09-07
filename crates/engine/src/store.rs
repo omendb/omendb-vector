@@ -37,6 +37,7 @@ use crate::segments::{
 };
 use crate::text::Postings;
 use crate::wal::Wal;
+use durable_fs::SyncClass;
 use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
@@ -198,6 +199,11 @@ impl Store {
     ) -> EngineResult<(Store, StoreRecovery)> {
         let dir = dir.as_ref().to_path_buf();
         std::fs::create_dir_all(&dir)?;
+        // A fresh multi-level directory must have every new ancestor
+        // entry durable, or the store directory itself can vanish on
+        // power loss right after a successful open.
+        durable_fs::fsync_dir_chain(&dir)
+            .map_err(|e| EngineError::Schema(format!("store dir sync: {e}")))?;
         // Validate the backend config up front: an invalid choice
         // (e.g. HNSW with dot metric) must fail the open, not surface
         // at first checkpoint.
@@ -215,7 +221,7 @@ impl Store {
                 ));
             }
         }
-        let (wal, wal_rec) = Wal::open(dir.join("wal.log"))?;
+        let (wal, wal_rec) = Wal::open_with_class(dir.join("wal.log"), SyncClass::default())?;
 
         let mut rebuilt = false;
         let mut manifest_gen = None;

@@ -28,8 +28,8 @@
 
 use crate::codec::{decode_frames, encode_frame, FrameKind};
 use crate::error::{EngineError, EngineResult};
-use crate::fsutil::atomic_write;
 use crate::records::Record;
+use durable_fs::atomic_write;
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeSet;
 use std::fs;
@@ -216,7 +216,8 @@ pub fn write_segment(
         encode_frame(FrameKind::Record, &fbody, &mut body);
     }
     let name = format!("seg-{generation:020}-{}.seg", uuid_simple());
-    atomic_write(dir, &name, &body)?;
+    atomic_write(&dir.join(&name), &body)
+        .map_err(|e| EngineError::Segment(format!("segment write: {e}")))?;
     Ok(name)
 }
 
@@ -224,7 +225,8 @@ pub fn write_segment(
 pub fn publish_manifest(dir: &Path, manifest: &Manifest) -> EngineResult<()> {
     let bytes = serde_json::to_vec_pretty(manifest)
         .map_err(|e| EngineError::Segment(format!("manifest serialize: {e}")))?;
-    atomic_write(dir, MANIFEST_NAME, &bytes)
+    atomic_write(&dir.join(MANIFEST_NAME), &bytes)
+        .map_err(|e| EngineError::Segment(format!("manifest publish: {e}")))
 }
 
 /// Load the manifest, if present and parseable.
@@ -264,15 +266,7 @@ pub fn gc_segments(dir: &Path, manifest: &Manifest) -> EngineResult<()> {
             fs::remove_file(entry.path())?;
         }
     }
-    fsutil::fsync_dir_public(dir)
-}
-
-/// Public dir-fsync passthrough for `gc_segments` (module boundary).
-mod fsutil {
-    use super::*;
-    pub(crate) fn fsync_dir_public(dir: &Path) -> EngineResult<()> {
-        crate::fsutil::fsync_dir(dir)
-    }
+    durable_fs::fsync_dir(dir).map_err(|e| EngineError::Segment(format!("dir fsync: {e}")))
 }
 
 #[cfg(test)]

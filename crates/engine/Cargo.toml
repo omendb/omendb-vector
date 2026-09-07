@@ -9,3 +9,7 @@ repository.workspace = true
 [dependencies]
 serde.workspace = true
 serde_json.workspace = true
+# LOCAL BRANCH ONLY: path dep to the sibling durable-fs crate. MUST flip
+# to the git dep (github.com/omendb/durable-fs) before merging to main —
+# CI checkouts do not have the sibling directory. Tracked in tk-tu7f.
+durable-fs = { path = "../../../durable-fs" }

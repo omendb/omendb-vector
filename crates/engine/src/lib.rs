@@ -20,8 +20,6 @@ pub mod planner;
 
 pub mod codec;
 
-pub mod fsutil;
-
 pub mod index;
 
 pub mod records;
