@@ -6,6 +6,8 @@ local store.
 
 **Work in progress.** The Rust engine is implemented and under development.
 APIs and storage formats may change; this is not a production release.
+Mutable visibility, transaction rollback, recovery integrity and Python write
+acknowledgments are not yet qualified. Keep stored data rebuildable.
 
 ## Current engine
 
@@ -18,8 +20,9 @@ The [`omendb-vector-engine`](crates/engine) crate provides:
 
 Canonical records own the stored data. Derived search indexes can be rebuilt
 from those records. See the [architecture](docs/architecture.md) for the storage
-and retrieval contracts, and the [evidence register](docs/evidence-register.md)
-for validation status and limitations.
+and retrieval contracts and current limitations. The
+[evidence register](docs/evidence-register.md) contains external research inputs,
+not release qualification of the implemented engine.
 
 ## Build and test
 

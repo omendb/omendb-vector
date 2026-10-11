@@ -1,6 +1,11 @@
 # Evidence Register — Fresh SOTA Pass, September 2026
 
-Language-neutral research backing the fresh Rust engine design. Priors (Apr–Jul 2026 monorepo docs) are the baseline; this register records what the **2025–26 literature and production systems** add or change. Every entry: finding → v0 implication → sources.
+Language-neutral external research informing candidate mechanisms. Priors
+(Apr–Jul 2026 monorepo docs) are historical evidence, not current implementation
+requirements. This register is not Vector release qualification; the
+[architecture](architecture.md) distinguishes implemented paths, required
+contracts and experiments. Reported peer performance and “v0 implications” below
+must be re-evaluated against matched workloads before becoming commitments.
 
 ## 1. Graph ANN: HNSW still the default; PAG is the challenger to watch
 
