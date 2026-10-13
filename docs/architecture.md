@@ -2,7 +2,8 @@
 
 **Status:** standalone Rust engine under development. This document separates
 current behavior from required contracts and measured-later proposals. It does
-not establish production readiness or resolve consolidation with DBNext.
+not establish production readiness. The 2026-10-13 repository/reuse decision below
+is a target, not a completed migration.
 
 ## Current implementation
 
@@ -31,13 +32,33 @@ quantized codes, posting lists and filter acceleration are derived state.
 Rebuildable indexes cannot define different deletion, replacement or transaction
 visibility from the canonical record view.
 
-The standalone engine owns its own WAL and commit outcome. Sharing
-`durable-fs` with DBNext/OLAP shares filesystem primitives, not transaction
-authority. The eventual independent-product versus DBNext-integrated future is
-open. An integrated DBNext access method would reuse algorithms over DBNext's
-canonical rows and kernel, not embed a second independently committing store.
-A separate CDC-fed projection instead needs explicit source identity,
-bootstrap/retention, consumer progress and freshness semantics.
+The current standalone engine owns its own WAL and commit outcome. Sharing
+`durable-fs` with OmenDB/OLAP shares filesystem primitives, not transaction
+authority. Integrated OmenDB retrieval uses its canonical rows and shared kernel;
+it does not embed this independently committing `Store` inside a SQL transaction.
+
+### Repository and component direction
+
+Keep this repository and its existing API available until replacement consumers
+are qualified. The long-term direction is reusable retrieval components and
+embedded/server facades, with native OmenDB vector/text access methods for queries
+that need relational snapshot and transaction composition. Independently operated
+or object-backed retrieval remains a valid deployment goal, not an automatic
+requirement for a separate canonical store in every application.
+
+Port concrete useful scoring, indexing, filtering or ranking components with their
+exact/recall/mutation oracles. Once a component serves integrated OmenDB, its shared
+source belongs in the OmenDB workspace and standalone consumers may depend on it.
+Keep one maintained implementation; do not copy the entire engine or create speculative
+shared crates. Retire replaced code only after migration and qualification. No repository
+archival, package release, API removal or source relocation happened in this design review.
+
+The cross-project decision is owned by
+[OmenDB ADR 0012](https://github.com/omendb/omendb/blob/storage-kernel-vnext/docs/adr/0012-unified-modalities-and-rewrite-strategy.md).
+An independent CDC-fed projection has its own durability/freshness contract and needs
+source identity, retained bootstrap/change history and consumer progress committed
+with its effects. It is not part of an atomic OmenDB transaction merely because its
+code or branding is shared. Preserve licenses when extracting reusable components.
 
 ## Required mutation and durability contract
 
@@ -84,7 +105,7 @@ result as complete.
 
 Standalone metadata predicates are not SQL's three-valued expressions and are
 not trusted authorization policy. Their missing/NULL/type/numeric comparison
-rules must be explicit. An eventual DBNext operator translates typed SQL
+rules must be explicit. An eventual OmenDB operator translates typed SQL
 predicates deliberately and uses trusted snapshot-bound eligibility. Replicated
 ACL fields alone do not establish immediate revocation.
 
@@ -116,6 +137,13 @@ Exact plus HNSW are current dense backends. Quantization, filtered traversal,
 segment routing, NVMe/object tiers and Mojo GPU kernels remain candidates, not
 required infrastructure. Introduce a concrete backend or kernel before
 generalizing a seam; keep batch-oriented scoring/reranking where useful.
+
+Choose filtered exact scan, predicate-aware graph traversal, clustered/IVF or SSD
+layouts using selectivity, filter/vector correlation, mutation rate, memory and
+I/O. No unfiltered resident-memory result selects every deployment. Preserve
+canonical values at their declared precision; compact routing codes are not a
+license to change exact scoring or visibility. Large vector/posting extents need
+not inherit the small-page layout of an OLTP index.
 
 Use representative mutable retrieval, deletion/replacement, restrictive and
 correlated filters, OOD embeddings and text/hybrid workloads. Report recall,
