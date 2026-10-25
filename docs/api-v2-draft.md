@@ -1,8 +1,11 @@
 # API v2 Draft — The Dev-Facing Surface
 
-Status: draft for Nick's approval. Decides the v2 surface across Rust + Python
-(+ future bindings). Companion evidence: `docs/api-survey.md`. Nothing here is
-implemented; sprint 8 starts after approval.
+**Status: historical, unapproved API proposal.** It is not a maintained
+implementation plan or a currently accepted binding contract. Consult the
+[README](../README.md), [architecture](architecture.md) and current Rust/Python
+source for real behavior. The analysis below remains useful as design evidence;
+no API v2 work is authorized or considered implemented by this draft alone.
+Companion evidence: `docs/api-survey.md`.
 
 Design constraints (settled, from handoff + this session):
 - Audience: sqlite/PostgreSQL/DuckDB-experienced devs. No Mongo conventions.

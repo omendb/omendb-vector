@@ -2,8 +2,10 @@
 
 **Status:** standalone Rust engine under development. This document separates
 current behavior from required contracts and measured-later proposals. It does
-not establish production readiness. The 2026-10-13 repository/reuse decision below
-is a target, not a completed migration.
+not establish production readiness. The 2026-10-25 OmenDB architecture keeps this independently deployable
+retrieval product and defines integration through reusable algorithms and
+explicit snapshots/CDC, not mandatory migration onto SeerDB's OLTP B-tree.
+This is a target, not a completed integration.
 
 ## Current implementation
 
@@ -53,8 +55,9 @@ Keep one maintained implementation; do not copy the entire engine or create spec
 shared crates. Retire replaced code only after migration and qualification. No repository
 archival, package release, API removal or source relocation happened in this design review.
 
-The cross-project decision is owned by
-[OmenDB ADR 0012](https://github.com/omendb/omendb/blob/storage-kernel-vnext/docs/adr/0012-unified-modalities-and-rewrite-strategy.md).
+The maintained cross-project contract is
+[OmenDB specialized engines and scale](https://github.com/omendb/omendb/blob/main/docs/design/engines-and-scale.md).
+The older ADR 0012 is rationale, not a second source of current requirements.
 An independent CDC-fed projection has its own durability/freshness contract and needs
 source identity, retained bootstrap/change history and consumer progress committed
 with its effects. It is not part of an atomic OmenDB transaction merely because its
