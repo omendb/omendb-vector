@@ -30,6 +30,13 @@ the standalone Vector engine to adopt SeerDB's OLTP B-tree or object layout.
   or tiering require representative exactness, recall, churn, p99,
   memory/space and recovery comparisons at matching revision/hardware.
   Historical SIFT and papers are references, not replacement qualification.
+- For dense ANN indexing/search changes, run the maintained standard SIFT
+  workload before and after under matching settings; that evidence remains
+  required for release-grade recall/throughput claims. Filtered search, text,
+  hybrid and mutation-heavy changes need *additional relevant real workloads*;
+  SIFT alone is insufficient. Synthetic microbenchmarks are diagnostic, not
+  standalone release-acceptance evidence. Record actual revisions, hardware,
+  latency distributions, recall and failure/skip results.
 - Keep reusable ranking/scoring/index components in **one** maintained owner
   once integrated; do not publish private OLAP source or start an incompatible
   duplicate implementation merely for repository symmetry.
