@@ -23,7 +23,7 @@ from those records. See the [architecture](docs/architecture.md) for the storage
 and retrieval contracts and current limitations. The
 [evidence register](docs/evidence-register.md) contains external research inputs,
 not release qualification of the implemented engine. Future integration with
-OmenDB follows its [specialized-engine contract](https://github.com/omendb/omendb/blob/main/docs/design/engines-and-scale.md):
+OmenDB follows its [specialized-engine contract](https://github.com/omendb/omendb/blob/main/docs/design/extensions.md):
 standalone datasets retain explicit independent durability, while components
 participating in OmenDB SQL use its **single transaction authority**, not
 this standalone Store's own WAL.

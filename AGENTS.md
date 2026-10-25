@@ -9,7 +9,7 @@ inspect source and current CI before changing code. The
 unqualified candidates; [API v2 draft](docs/api-v2-draft.md) is **not an
 accepted/implemented API contract**.
 
-[OmenDB's specialized-engine contract](https://github.com/omendb/omendb/blob/main/docs/design/engines-and-scale.md)
+[OmenDB's specialized-engine contract](https://github.com/omendb/omendb/blob/main/docs/design/extensions.md)
 defines the long-term integration boundary: canonical relational records,
 constraints and catalog share **one** SeerDB/OmenDB transaction authority.
 Standalone Vector can retain its independently qualified WAL and storage

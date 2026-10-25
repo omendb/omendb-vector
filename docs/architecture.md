@@ -56,7 +56,7 @@ shared crates. Retire replaced code only after migration and qualification. No r
 archival, package release, API removal or source relocation happened in this design review.
 
 The maintained cross-project contract is
-[OmenDB specialized engines and scale](https://github.com/omendb/omendb/blob/main/docs/design/engines-and-scale.md).
+[OmenDB specialized engines and scale](https://github.com/omendb/omendb/blob/main/docs/design/extensions.md).
 The older ADR 0012 is rationale, not a second source of current requirements.
 An independent CDC-fed projection has its own durability/freshness contract and needs
 source identity, retained bootstrap/change history and consumer progress committed
