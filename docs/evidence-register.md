@@ -1,6 +1,7 @@
-# Evidence Register — Fresh SOTA Pass, September 2026
+# OmenDB Vector research evidence register
 
-Language-neutral external research informing candidate mechanisms. Priors
+Dated external research and candidate mechanisms. The original comprehensive
+pass was September 2026; later evidence is dated separately. Priors
 (Apr–Jul 2026 monorepo docs) are historical evidence, not current implementation
 requirements. This register is not Vector release qualification; the
 [architecture](architecture.md) distinguishes implemented paths, required
