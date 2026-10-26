@@ -7,6 +7,15 @@ requirements. This register is not Vector release qualification; the
 contracts and experiments. Reported peer performance and “v0 implications” below
 must be re-evaluated against matched workloads before becoming commitments.
 
+## October 26, 2026: fully vectorized search-engine execution
+
+- **Primary source:** [Adrien Grand, “The first search engine with fully vectorized query execution”](https://turbopuffer.com/blog/fully-vectorized-search-engine), October 26, 2026. Its claim of being “first” is vendor characterization, not independently established. Turbopuffer v3 is described as a *future production rollout*, not a benchmarked released win.
+- **Mechanism:** A common batch-oriented interface across term scoring, ranking, filtering, decay, top-k, aggregation and projection amortizes per-record operator dispatch and improves access predictability. Turbopuffer contrasts SPFresh's cluster scans and its vectorized block-max MAXSCORE against HNSW/block-max WAND's data-dependent random-access pruning. These are workload trade-offs, not universal dominance.
+- **Related evidence:** [Turbopuffer v3 development log](https://turbopuffer.com/v3) discusses bulk columnar group-by scans, compressed constant/dictionary/RLE/frequency representations and compute-on-compressed execution. Published p90 ratios versus v2 are mixed as of October 26; reported internal FTS improvements and 15× grouped-count results are neither independent nor Vector measurements.
+- **Vector-specific observation:** `crates/engine/src/store.rs::text_search_filtered` rebuilds postings over all filtered live candidates for each query; `text/bm25.rs::Postings::top_k` scans and sorts scored docs, while `hybrid_search_rrf_filtered` calls the exact filtered vector path. These are candidate bottlenecks from code inspection, **not** profiled magnitudes.
+- **Candidate experiment:** Persistent, version-correct postings + block-level BM25 upper bounds, bitmap-first filtering, batch scoring/top-k and late payload fetch. Compare MAXSCORE vs WAND vs complete scoring; retain existing filtered-statistics ranking/oracle unless explicitly changing semantics. For dense ANN compare HNSW with cluster-based batch algorithms only after matching recall, mutation, filter and memory/cold-cache constraints.
+- **Gate:** MS MARCO/BEIR-style text and long multi-term queries, filtered/correlated and restrictive predicates, frequent insert/replace/delete/L0, 1/10/100% selectivity, hot/cold storage, p50/p95/p99, CPU/allocations, bytes scanned, correctness/eligible-k and freshness. Preserve standard SIFT evidence for dense ANN; no performance or recall win is accepted from vendor claims alone.
+
 ## 1. Graph ANN: HNSW still the default; PAG is the challenger to watch
 
 - **PAG (Projection-Augmented Graph, arxiv 2603.06660, Mar 2026):** up to **5× HNSW QPS-recall** on modern datasets (384–3072d, text/image/multimodal), 20–40% of HNSW build time, robustness across K and dimensionality. Strongest HNSW challenger on current evidence. Status: single paper, needs independent reproduction.

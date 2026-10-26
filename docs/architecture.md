@@ -118,6 +118,50 @@ interval, or use complete transaction-aware deltas/fallback. Capture canonical
 visibility and physical index generations together; do not independently pick
 the latest instance of each.
 
+## Search execution and batched operators (design candidates, 2026-10-26)
+
+The October 26 [Turbopuffer vectorized-search article](https://turbopuffer.com/blog/fully-vectorized-search-engine)
+suggests preserving batches through heterogeneous **candidate generation →
+filter/eligibility → scoring/reranking → top-k → projection** rather than
+reconstructing owned rows between each operator. This is a query-execution
+direction, **not** a commitment to a universal format, SIMD-only search,
+SPFresh replacing HNSW, or an already implemented Vector API.
+
+The immediate source-level opportunity precedes generic vectorization:
+`Store::text_search_filtered` currently walks the merged live records and
+builds a fresh `Postings` set per query. `Postings::top_k` then visits
+all documents to compute BM25 and sorts scored candidates. For sufficiently
+large/mutable collections, qualify **persistent generation-bound postings**
+with exact L0 delta/tombstone coverage, compact block doc IDs/frequencies,
+document lengths/statistics, batch reads, and dynamic block upper-bound
+top-k algorithms (e.g. vectorized MAXSCORE versus block-max WAND).
+Benchmark this against the current implementation before creating a new
+backend abstraction. Preserve the **current filtered BM25 corpus/statistics
+contract** as an explicit oracle until intentionally revising ranking
+semantics; using global instead of filter-adjusted statistics is not a
+mere physical optimization.
+
+Batched metadata evaluation can use bitmaps/selection vectors and late
+materialization of wide attributes; constant/dictionary/RLE/bitpacked
+representations are candidates when they reduce bytes and comparisons.
+An ANN candidate's ID, latest canonical version, tombstone and filter
+eligibility must still be rechecked at the requested view. Maintain
+top-k refill and exact fallback; pruning score bounds must be valid for
+the whole ranking/fusion expression. For hybrid, compare fused batches
+against the current `hybrid_search_rrf_filtered` path, which uses a
+filtered exact vector leg and a reconstructed text leg, before adding
+complex rank-fusion execution.
+
+Keep HNSW for the existing embedded/hot workload while comparing
+cluster/block-based candidates (including SPFresh-inspired approaches)
+at comparable **recall, filter selectivity/correlation, update rate,
+memory, index build/maintenance, hot/cold I/O and p99**. A random
+graph can beat a batched cluster scan at some workload sizes; executing
+more candidates predictably is not a guarantee of lower latency.
+Standalone Vector owns search operators and physical index design;
+a future OmenDB integration exposes typed batches but uses OmenDB's
+transaction authority rather than importing this Store's WAL.
+
 ## Concurrency and resource lifecycle
 
 Current ownership is a mutable `Store` handle, not a qualified single-writer plus
